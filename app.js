@@ -1,0 +1,704 @@
+'use strict';
+
+// ── State ──────────────────────────────────────────────────────────────────
+const state = {
+  page: 'dashboard',
+  vehicles: [], customers: [], bookings: [], payments: [], expenses: [],
+  loading: false,
+  bookingFilter: 'all', bookingSearch: '',
+  vehicleFilter: 'all',
+  customerSearch: '',
+  finPeriod: 'month',
+};
+
+// ── API ────────────────────────────────────────────────────────────────────
+function callApi(params, opts = {}) {
+  const url = GAS_URL + '?' + new URLSearchParams(params);
+  return Promise.race([
+    fetch(url).then(r => r.json()),
+    new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), opts.timeout || 55000)),
+  ]);
+}
+
+async function fetchAll() {
+  if (GAS_URL.includes('YOUR_DEPLOYMENT_ID')) { renderPage(); return; }
+  state.loading = true; renderPage();
+  try {
+    const d = await callApi({ action: 'getAll' });
+    if (d.error) throw new Error(d.error);
+    state.vehicles  = d.vehicles  || [];
+    state.customers = d.customers || [];
+    state.bookings  = d.bookings  || [];
+    state.payments  = d.payments  || [];
+    state.expenses  = d.expenses  || [];
+  } catch (e) { toast('Failed to load: ' + e.message, 'error'); }
+  state.loading = false; renderPage();
+}
+
+// ── Utilities ──────────────────────────────────────────────────────────────
+function amd(n)  { n = Number(n)||0; return n.toLocaleString() + ' ֏'; }
+function amdK(n) {
+  n = Number(n)||0;
+  if (Math.abs(n) >= 1e6) return (n/1e6).toFixed(1).replace(/\.0$/,'') + 'M ֏';
+  if (Math.abs(n) >= 1e3) return Math.round(n/1e3) + 'K ֏';
+  return n + ' ֏';
+}
+function fmtDate(d) {
+  if (!d) return '—';
+  const dt = new Date(d); if (isNaN(dt)) return String(d);
+  return dt.toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' });
+}
+function todayStr() { return new Date().toISOString().slice(0,10); }
+function diffDays(a, b) { return Math.max(1, Math.round((new Date(b)-new Date(a))/86400000)); }
+function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
+
+// ── Business logic ─────────────────────────────────────────────────────────
+function bookingStatus(b) {
+  if (b.cancelled===true || String(b.cancelled).toLowerCase()==='true') return 'Cancelled';
+  if (b.returnDate) return 'Completed';
+  const now = todayStr();
+  if (b.startDate > now) return 'Upcoming';
+  if (b.endDate   < now) return 'Overdue';
+  return 'Active';
+}
+
+function vehicleDisplayStatus(v) {
+  const rented = state.bookings.some(b => b.vehicleId===v.id && bookingStatus(b)==='Active');
+  return rented ? 'Rented' : (v.status || 'Available');
+}
+
+function bookingPaid(bookingId) {
+  return state.payments.filter(p => p.bookingId===bookingId).reduce((s,p) => s+(Number(p.amount)||0), 0);
+}
+
+function customerById(id)     { return state.customers.find(c => c.id===id); }
+function vehicleById(id)      { return state.vehicles.find(v => v.id===id); }
+function customerName(id)     { const c=customerById(id); return c?c.name:'—'; }
+function vehicleLabelShort(id){ const v=vehicleById(id); return v?`${v.make} ${v.model}`:'—'; }
+function vehicleLabel(id)     { const v=vehicleById(id); return v?`${v.make} ${v.model} · ${v.plate}`:'—'; }
+
+function statusBadge(st) {
+  const m={Active:'badge-active',Upcoming:'badge-upcoming',Completed:'badge-completed',Cancelled:'badge-cancelled',Overdue:'badge-overdue'};
+  return `<span class="badge ${m[st]||'badge-completed'}">${st}</span>`;
+}
+function vehicleBadge(st) {
+  const m={Available:'badge-available',Rented:'badge-rented',Maintenance:'badge-maint',Inactive:'badge-inactive'};
+  return `<span class="badge ${m[st]||'badge-available'}">${st}</span>`;
+}
+
+function periodFilter(dateStr) {
+  if (!dateStr) return false;
+  const d=new Date(dateStr), now=new Date();
+  if (state.finPeriod==='month')      return d.getFullYear()===now.getFullYear() && d.getMonth()===now.getMonth();
+  if (state.finPeriod==='last_month') { const lm=new Date(now.getFullYear(),now.getMonth()-1,1); return d.getFullYear()===lm.getFullYear()&&d.getMonth()===lm.getMonth(); }
+  if (state.finPeriod==='year')       return d.getFullYear()===now.getFullYear();
+  return true;
+}
+
+// ── Toast ──────────────────────────────────────────────────────────────────
+function toast(msg, type='info') {
+  const el=document.createElement('div');
+  el.className=`toast toast-${type}`; el.textContent=msg;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(()=>el.remove(), 3500);
+}
+
+// ── Modal ──────────────────────────────────────────────────────────────────
+function openModal(html) {
+  const root=document.getElementById('modal-root');
+  root.innerHTML=html;
+  root.querySelector('.modal-overlay')?.addEventListener('click', e => { if(e.target===e.currentTarget) closeModal(); });
+}
+function closeModal() { document.getElementById('modal-root').innerHTML=''; }
+
+const CLOSE_BTN = `<button class="modal-close" onclick="closeModal()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>`;
+
+// ── Navigation ─────────────────────────────────────────────────────────────
+const PAGE_TITLES = { dashboard:'Dashboard', bookings:'Bookings', fleet:'Fleet', customers:'Customers', finances:'Finances' };
+
+function navigate(page) {
+  state.page=page;
+  document.querySelectorAll('[data-page]').forEach(el => el.classList.toggle('active', el.dataset.page===page));
+  document.getElementById('page-title').textContent = PAGE_TITLES[page]||page;
+  renderPage();
+}
+document.querySelectorAll('[data-page]').forEach(el => el.addEventListener('click', ()=>navigate(el.dataset.page)));
+
+// ── Router ─────────────────────────────────────────────────────────────────
+function renderPage() {
+  const body=document.getElementById('page-body'), actions=document.getElementById('topbar-actions');
+  if (state.loading) { body.innerHTML='<div class="loading-overlay"><div class="loading-spinner"></div> Loading…</div>'; actions.innerHTML=''; return; }
+  ({ dashboard:renderDashboard, bookings:renderBookings, fleet:renderFleet, customers:renderCustomers, finances:renderFinances }[state.page]||renderDashboard)(body, actions);
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// DASHBOARD
+// ──────────────────────────────────────────────────────────────────────────
+function renderDashboard(body, actions) {
+  actions.innerHTML = `<button class="btn btn-ghost btn-sm" onclick="fetchAll()">↺ Refresh</button>`;
+
+  const enriched   = state.bookings.map(b=>({...b,_st:bookingStatus(b)}));
+  const active     = enriched.filter(b=>b._st==='Active');
+  const overdue    = enriched.filter(b=>b._st==='Overdue');
+  const upcoming   = enriched.filter(b=>b._st==='Upcoming');
+  const monthPay   = state.payments.filter(p=>periodFilter(p.date));
+  const income     = monthPay.reduce((s,p)=>s+(Number(p.amount)||0),0);
+  const outstanding= [...active,...overdue,...upcoming].reduce((s,b)=>s+Math.max(0,(Number(b.totalAmount)||0)-bookingPaid(b.id)),0);
+  const available  = state.vehicles.filter(v=>vehicleDisplayStatus(v)==='Available').length;
+  const fleet      = state.vehicles.filter(v=>v.status!=='Inactive').length;
+
+  const setupBanner = GAS_URL.includes('YOUR_DEPLOYMENT_ID')
+    ? `<div class="card" style="margin-bottom:16px;border-left:4px solid var(--warning)"><div class="card-body" style="color:var(--warning);font-weight:600">⚠ Setup: open config.js and replace YOUR_DEPLOYMENT_ID with your Google Apps Script URL to connect data.</div></div>` : '';
+
+  const activeSorted = [...active,...overdue].sort((a,b)=>a.endDate>b.endDate?1:-1);
+
+  body.innerHTML = `
+    ${setupBanner}
+    <div class="kpi-row">
+      <div class="kpi kpi-warn"><div class="kpi-icon">🚗</div><div class="kpi-label">Active Rentals</div><div class="kpi-value">${active.length}</div><div class="kpi-sub">${overdue.length?`<span style="color:var(--danger)">${overdue.length} overdue</span>`:'all on time'}</div></div>
+      <div class="kpi kpi-ok"><div class="kpi-icon">✅</div><div class="kpi-label">Available Cars</div><div class="kpi-value">${available}</div><div class="kpi-sub">of ${fleet} in fleet</div></div>
+      <div class="kpi kpi-info"><div class="kpi-icon">💰</div><div class="kpi-label">Income This Month</div><div class="kpi-value">${amdK(income)}</div><div class="kpi-sub">${monthPay.length} payment${monthPay.length!==1?'s':''}</div></div>
+      <div class="kpi kpi-bad"><div class="kpi-icon">⏳</div><div class="kpi-label">Outstanding</div><div class="kpi-value">${amdK(outstanding)}</div><div class="kpi-sub">${active.length+overdue.length+upcoming.length} bookings</div></div>
+    </div>
+
+    <div class="dash-grid">
+      <div class="card dash-full">
+        <div class="card-header">
+          <div class="card-title">Active & Overdue Rentals</div>
+          <button class="btn btn-primary btn-sm" onclick="openBookingModal()">+ New Booking</button>
+        </div>
+        <div class="table-wrap">
+          ${activeSorted.length ? `<table><thead><tr><th>Customer</th><th>Vehicle</th><th>End Date</th><th>Days</th><th>Total</th><th>Balance</th><th>Status</th><th></th></tr></thead><tbody>
+          ${activeSorted.map(b=>{
+            const paid=bookingPaid(b.id), bal=(Number(b.totalAmount)||0)-paid;
+            const days = b._st==='Overdue' ? `<span style="color:var(--danger)">+${diffDays(b.endDate,todayStr())}d</span>` : diffDays(todayStr(),b.endDate)+'d left';
+            return `<tr><td class="td-bold">${customerName(b.customerId)}</td><td>${vehicleLabelShort(b.vehicleId)}</td><td>${fmtDate(b.endDate)}</td><td>${days}</td><td class="td-mono">${amd(b.totalAmount)}</td><td class="td-mono" style="${bal>0?'color:var(--danger);font-weight:700':'color:var(--success)'}">${amd(bal)}</td><td>${statusBadge(b._st)}</td><td style="white-space:nowrap"><button class="btn btn-ghost btn-sm" onclick="openBookingModal('${b.id}')">Edit</button> <button class="btn btn-ghost btn-sm" onclick="openPaymentModal('${b.id}')">Pay</button></td></tr>`;
+          }).join('')}
+          </tbody></table>` : `<div class="empty-state"><div>No active rentals right now</div></div>`}
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div class="card-title">Upcoming (${upcoming.length})</div></div>
+        <div class="card-body">
+          ${upcoming.length ? upcoming.slice(0,6).map(b=>`
+            <div class="activity-item">
+              <div class="activity-dot activity-dot-primary"></div>
+              <div class="activity-text"><strong>${customerName(b.customerId)}</strong> — ${vehicleLabelShort(b.vehicleId)}<br><span style="font-size:11px;color:var(--muted)">${fmtDate(b.startDate)} → ${fmtDate(b.endDate)}</span></div>
+              <div class="activity-time">${amd(b.totalAmount)}</div>
+            </div>`).join('') : `<div style="color:var(--muted);font-size:13px">No upcoming bookings</div>`}
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div class="card-title">Fleet Overview</div></div>
+        <div class="card-body">
+          ${['Available','Rented','Maintenance','Inactive'].map(st=>{
+            const count=state.vehicles.filter(v=>vehicleDisplayStatus(v)===st).length;
+            const pct=fleet>0?Math.round(count/fleet*100):0;
+            const colors={Available:'var(--success)',Rented:'var(--warning)',Maintenance:'var(--danger)',Inactive:'var(--muted)'};
+            return `<div style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:12px;font-weight:600;color:var(--text2)">${st}</span><span style="font-size:12px;color:var(--muted)">${count}</span></div><div class="fin-bar-bg"><div class="fin-bar-fill" style="width:${pct}%;background:${colors[st]}"></div></div></div>`;
+          }).join('')}
+        </div>
+      </div>
+    </div>`;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// BOOKINGS
+// ──────────────────────────────────────────────────────────────────────────
+function renderBookings(body, actions) {
+  actions.innerHTML = `<button class="btn btn-primary btn-sm" onclick="openBookingModal()">+ New Booking</button>`;
+  const enriched = state.bookings.map(b=>({...b,_st:bookingStatus(b)}));
+  const search=(state.bookingSearch||'').toLowerCase();
+  const counts={};
+  ['all','active','upcoming','overdue','completed','cancelled'].forEach(f=>{
+    counts[f]=f==='all'?enriched.length:enriched.filter(b=>b._st.toLowerCase()===f).length;
+  });
+  const filtered=enriched.filter(b=>{
+    if(state.bookingFilter!=='all'&&b._st.toLowerCase()!==state.bookingFilter) return false;
+    if(search){const cn=customerName(b.customerId).toLowerCase(),vp=(vehicleById(b.vehicleId)?.plate||'').toLowerCase(),vn=vehicleLabelShort(b.vehicleId).toLowerCase();return cn.includes(search)||vp.includes(search)||vn.includes(search);}
+    return true;
+  }).sort((a,b)=>b.createdAt>a.createdAt?1:-1);
+
+  body.innerHTML=`
+    <div class="list-controls">
+      <div class="search-wrap">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input class="search-input" placeholder="Search customer or plate…" value="${state.bookingSearch||''}" oninput="state.bookingSearch=this.value;renderPage()">
+      </div>
+      <div class="filter-tabs">
+        ${['all','active','upcoming','overdue','completed','cancelled'].map(f=>`<div class="filter-tab${state.bookingFilter===f?' active':''}" onclick="state.bookingFilter='${f}';renderPage()">${f[0].toUpperCase()+f.slice(1)}${counts[f]?' ('+counts[f]+')':''}</div>`).join('')}
+      </div>
+    </div>
+    <div class="card">
+      <div class="table-wrap">
+        ${filtered.length?`<table><thead><tr><th>Customer</th><th>Vehicle</th><th>Start</th><th>End / Return</th><th>Days</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th></th></tr></thead><tbody>
+        ${filtered.map(b=>{
+          const paid=bookingPaid(b.id),bal=(Number(b.totalAmount)||0)-paid;
+          const days=diffDays(b.startDate,b.returnDate||b.endDate);
+          return `<tr>
+            <td class="td-bold">${customerName(b.customerId)}</td>
+            <td>${vehicleLabelShort(b.vehicleId)}<br><small style="color:var(--muted)">${vehicleById(b.vehicleId)?.plate||''}</small></td>
+            <td>${fmtDate(b.startDate)}</td>
+            <td>${fmtDate(b.returnDate||b.endDate)}${b.returnDate?` <small style="color:var(--success)">(ret)</small>`:''}</td>
+            <td>${days}</td>
+            <td class="td-mono">${amd(b.totalAmount)}</td>
+            <td class="td-mono" style="color:var(--success)">${amd(paid)}</td>
+            <td class="td-mono" style="${bal>0?'color:var(--danger);font-weight:700':''}">${amd(bal)}</td>
+            <td>${statusBadge(b._st)}</td>
+            <td style="white-space:nowrap">
+              <button class="btn btn-ghost btn-sm" onclick="openBookingModal('${b.id}')">Edit</button>
+              ${b._st==='Active'||b._st==='Overdue'?`<button class="btn btn-ghost btn-sm" onclick="openReturnModal('${b.id}')">Return</button>`:''}
+              ${b._st!=='Completed'&&b._st!=='Cancelled'?`<button class="btn btn-ghost btn-sm" onclick="openPaymentModal('${b.id}')">Pay</button>`:''}
+            </td>
+          </tr>`;
+        }).join('')}
+        </tbody></table>`:`<div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:40px;height:40px;opacity:.25"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/></svg><div class="empty-state-title">No bookings found</div></div>`}
+      </div>
+    </div>`;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// FLEET
+// ──────────────────────────────────────────────────────────────────────────
+function renderFleet(body, actions) {
+  actions.innerHTML=`<button class="btn btn-primary btn-sm" onclick="openVehicleModal()">+ Add Vehicle</button>`;
+  const counts={};
+  ['all','available','rented','maintenance','inactive'].forEach(f=>{
+    counts[f]=f==='all'?state.vehicles.length:state.vehicles.filter(v=>vehicleDisplayStatus(v).toLowerCase()===f).length;
+  });
+  const filtered=state.vehicles.filter(v=>state.vehicleFilter==='all'||vehicleDisplayStatus(v).toLowerCase()===state.vehicleFilter);
+
+  body.innerHTML=`
+    <div class="list-controls">
+      <div class="filter-tabs">
+        ${['all','available','rented','maintenance','inactive'].map(f=>`<div class="filter-tab${state.vehicleFilter===f?' active':''}" onclick="state.vehicleFilter='${f}';renderPage()">${f[0].toUpperCase()+f.slice(1)} (${counts[f]})</div>`).join('')}
+      </div>
+    </div>
+    <div class="fleet-grid">
+      ${filtered.length?filtered.map(v=>{
+        const st=vehicleDisplayStatus(v);
+        const ab=state.bookings.find(b=>b.vehicleId===v.id&&bookingStatus(b)==='Active');
+        const expiring=[];
+        const today=todayStr();
+        if(v.insuranceExpiry&&v.insuranceExpiry<new Date(Date.now()+30*86400000).toISOString().slice(0,10)) expiring.push('Insurance exp. '+fmtDate(v.insuranceExpiry));
+        if(v.regExpiry&&v.regExpiry<new Date(Date.now()+30*86400000).toISOString().slice(0,10)) expiring.push('Reg exp. '+fmtDate(v.regExpiry));
+        return `<div class="vehicle-card" onclick="openVehicleModal('${v.id}')">
+          <div class="vehicle-card-header"><div><div class="vehicle-make">${v.make} ${v.model}</div><div class="vehicle-plate">${v.plate}${v.year?' · '+v.year:''}${v.color?' · '+v.color:''}</div></div>${vehicleBadge(st)}</div>
+          <div class="vehicle-body">
+            ${ab?`<div class="vehicle-meta"><span class="vehicle-meta-key">Rented to</span><strong>${customerName(ab.customerId)}</strong></div><div class="vehicle-meta"><span class="vehicle-meta-key">Until</span>${fmtDate(ab.endDate)}</div>`:''}
+            ${v.mileage?`<div class="vehicle-meta"><span class="vehicle-meta-key">Mileage</span>${Number(v.mileage).toLocaleString()} km</div>`:''}
+            ${expiring.map(e=>`<div class="vehicle-meta" style="color:var(--warning);font-size:11px">⚠ ${e}</div>`).join('')}
+          </div>
+          <div class="vehicle-footer"><div class="vehicle-rate">${amd(v.dailyRate)} <span>/ day</span></div><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openExpenseModal(null,'${v.id}')">+ Expense</button></div>
+        </div>`;
+      }).join(''):`<div class="empty-state" style="grid-column:1/-1"><div class="empty-state-title">No vehicles</div><button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="openVehicleModal()">Add first vehicle</button></div>`}
+    </div>`;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// CUSTOMERS
+// ──────────────────────────────────────────────────────────────────────────
+function renderCustomers(body, actions) {
+  actions.innerHTML=`<button class="btn btn-primary btn-sm" onclick="openCustomerModal()">+ Add Customer</button>`;
+  const search=(state.customerSearch||'').toLowerCase();
+  const filtered=state.customers.filter(c=>!search||c.name?.toLowerCase().includes(search)||c.phone?.includes(search)||c.idNumber?.toLowerCase().includes(search)).sort((a,b)=>a.name>b.name?1:-1);
+
+  body.innerHTML=`
+    <div class="list-controls">
+      <div class="search-wrap">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input class="search-input" placeholder="Search name, phone, ID…" value="${state.customerSearch||''}" oninput="state.customerSearch=this.value;renderPage()">
+      </div>
+    </div>
+    <div class="card">
+      <div class="table-wrap">
+        ${filtered.length?`<table><thead><tr><th>Name</th><th>Phone</th><th>ID / Passport</th><th>License</th><th>Rentals</th><th>Total Spent</th><th>Last Rental</th><th></th></tr></thead><tbody>
+        ${filtered.map(c=>{
+          const cbooks=state.bookings.filter(b=>b.customerId===c.id&&bookingStatus(b)!=='Cancelled');
+          const spent=state.payments.filter(p=>cbooks.some(b=>b.id===p.bookingId)).reduce((s,p)=>s+(Number(p.amount)||0),0);
+          const last=cbooks.sort((a,b)=>b.createdAt>a.createdAt?1:-1)[0];
+          return `<tr>
+            <td class="td-bold">${c.name}</td>
+            <td>${c.phone||'—'}</td>
+            <td>${c.idNumber||'—'}</td>
+            <td>${c.licenseNumber||'—'}</td>
+            <td>${cbooks.length}</td>
+            <td class="td-mono">${amd(spent)}</td>
+            <td>${last?fmtDate(last.startDate):'—'}</td>
+            <td style="white-space:nowrap">
+              <button class="btn btn-ghost btn-sm" onclick="openCustomerModal('${c.id}')">Edit</button>
+              <button class="btn btn-ghost btn-sm" onclick="openBookingModal(null,'${c.id}')">Book</button>
+            </td>
+          </tr>`;
+        }).join('')}
+        </tbody></table>`:`<div class="empty-state"><div class="empty-state-title">No customers yet</div><button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="openCustomerModal()">Add first customer</button></div>`}
+      </div>
+    </div>`;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// FINANCES
+// ──────────────────────────────────────────────────────────────────────────
+function renderFinances(body, actions) {
+  actions.innerHTML=`
+    <select class="form-control" style="width:auto;font-size:12px" onchange="state.finPeriod=this.value;renderPage()">
+      <option value="month" ${state.finPeriod==='month'?'selected':''}>This Month</option>
+      <option value="last_month" ${state.finPeriod==='last_month'?'selected':''}>Last Month</option>
+      <option value="year" ${state.finPeriod==='year'?'selected':''}>This Year</option>
+      <option value="all" ${state.finPeriod==='all'?'selected':''}>All Time</option>
+    </select>
+    <button class="btn btn-primary btn-sm" onclick="openExpenseModal()">+ Expense</button>`;
+
+  const pays=state.payments.filter(p=>periodFilter(p.date));
+  const exps=state.expenses.filter(e=>periodFilter(e.date));
+  const income=pays.reduce((s,p)=>s+(Number(p.amount)||0),0);
+  const expTotal=exps.reduce((s,e)=>s+(Number(e.amount)||0),0);
+  const net=income-expTotal;
+  const outstanding=state.bookings.filter(b=>{const st=bookingStatus(b);return st==='Active'||st==='Overdue'||st==='Upcoming';}).reduce((s,b)=>s+Math.max(0,(Number(b.totalAmount)||0)-bookingPaid(b.id)),0);
+
+  const byMethod={},byCat={},byVehicle={};
+  pays.forEach(p=>{const m=p.method||'Other';byMethod[m]=(byMethod[m]||0)+(Number(p.amount)||0);});
+  exps.forEach(e=>{const c=e.category||'Other';byCat[c]=(byCat[c]||0)+(Number(e.amount)||0);if(e.vehicleId){const k=vehicleLabelShort(e.vehicleId);byVehicle[k]=(byVehicle[k]||0)+(Number(e.amount)||0);}});
+
+  function barList(obj,total,color){
+    const entries=Object.entries(obj).sort((a,b)=>b[1]-a[1]);
+    if(!entries.length) return '<div style="color:var(--muted);font-size:13px;padding:8px 0">No data</div>';
+    return `<div class="fin-bar-wrap">${entries.map(([k,v])=>{const pct=total>0?Math.round(v/total*100):0;return `<div class="fin-bar-row"><div class="fin-bar-label">${k}</div><div class="fin-bar-bg"><div class="fin-bar-fill" style="width:${pct}%;background:${color}"></div></div><div class="fin-bar-amt">${amd(v)}</div></div>`;}).join('')}</div>`;
+  }
+
+  const recentPay=[...pays].sort((a,b)=>b.date>a.date?1:-1).slice(0,8);
+  const recentExp=[...exps].sort((a,b)=>b.date>a.date?1:-1).slice(0,8);
+
+  body.innerHTML=`
+    <div class="kpi-row">
+      <div class="kpi kpi-ok"><div class="kpi-icon">💰</div><div class="kpi-label">Income</div><div class="kpi-value">${amdK(income)}</div><div class="kpi-sub">${pays.length} payments</div></div>
+      <div class="kpi kpi-bad"><div class="kpi-icon">💸</div><div class="kpi-label">Expenses</div><div class="kpi-value">${amdK(expTotal)}</div><div class="kpi-sub">${exps.length} items</div></div>
+      <div class="kpi ${net>=0?'kpi-ok':'kpi-bad'}"><div class="kpi-icon">${net>=0?'📈':'📉'}</div><div class="kpi-label">Net Profit</div><div class="kpi-value" style="color:${net>=0?'var(--success)':'var(--danger)'}">${amdK(net)}</div><div class="kpi-sub">${net>=0?'profit':'loss'}</div></div>
+      <div class="kpi kpi-warn"><div class="kpi-icon">⏳</div><div class="kpi-label">Outstanding</div><div class="kpi-value">${amdK(outstanding)}</div><div class="kpi-sub">uncollected</div></div>
+    </div>
+    <div class="dash-grid">
+      <div class="card"><div class="card-header"><div class="card-title">Income by Method</div></div><div class="card-body">${barList(byMethod,income,'var(--success)')}</div></div>
+      <div class="card"><div class="card-header"><div class="card-title">Expenses by Category</div></div><div class="card-body">${barList(byCat,expTotal,'var(--danger)')}</div></div>
+      ${Object.keys(byVehicle).length?`<div class="card"><div class="card-header"><div class="card-title">Expenses by Vehicle</div></div><div class="card-body">${barList(byVehicle,expTotal,'var(--warning)')}</div></div>`:''}
+      <div class="card">
+        <div class="card-header"><div class="card-title">Recent Payments</div></div>
+        <div class="table-wrap">${recentPay.length?`<table><thead><tr><th>Date</th><th>Customer</th><th>Method</th><th>Type</th><th>Amount</th></tr></thead><tbody>${recentPay.map(p=>{const b=state.bookings.find(x=>x.id===p.bookingId);return `<tr><td>${fmtDate(p.date)}</td><td>${b?customerName(b.customerId):'—'}</td><td>${p.method||'—'}</td><td>${p.type||'—'}</td><td class="td-mono" style="color:var(--success);font-weight:600">${amd(p.amount)}</td></tr>`;}).join('')}</tbody></table>`:'<div class="empty-state">No payments in period</div>'}</div>
+      </div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">Recent Expenses</div></div>
+        <div class="table-wrap">${recentExp.length?`<table><thead><tr><th>Date</th><th>Category</th><th>Vehicle</th><th>Description</th><th>Amount</th><th></th></tr></thead><tbody>${recentExp.map(e=>`<tr><td>${fmtDate(e.date)}</td><td>${e.category||'—'}</td><td>${e.vehicleId?vehicleLabelShort(e.vehicleId):'—'}</td><td>${e.description||'—'}</td><td class="td-mono" style="color:var(--danger);font-weight:600">${amd(e.amount)}</td><td><button class="btn btn-ghost btn-sm" onclick="deleteExpense('${e.id}')">×</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state">No expenses in period</div>'}</div>
+      </div>
+    </div>`;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// MODAL: BOOKING
+// ──────────────────────────────────────────────────────────────────────────
+function openBookingModal(bookingId, prefillCustomerId) {
+  const b=bookingId?state.bookings.find(x=>x.id===bookingId):null;
+  const custOpts=state.customers.map(c=>`<option value="${c.id}" ${(b?.customerId===c.id||prefillCustomerId===c.id)?'selected':''}>${c.name} — ${c.phone||''}</option>`).join('');
+  const vehOpts=state.vehicles.filter(v=>v.status!=='Inactive').map(v=>`<option value="${v.id}" ${b?.vehicleId===v.id?'selected':''} data-rate="${v.dailyRate}">${v.make} ${v.model} · ${v.plate} (${amd(v.dailyRate)}/d)</option>`).join('');
+
+  openModal(`<div class="modal-overlay"><div class="modal modal-wide">
+    <div class="modal-header"><div class="modal-title">${b?'Edit Booking':'New Booking'}</div>${CLOSE_BTN}</div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label">Customer <span class="req">*</span></label>
+          <select class="form-control" id="bk-cust"><option value="">— select —</option>${custOpts}</select>
+          <div style="margin-top:6px"><button class="btn btn-ghost btn-sm" onclick="openCustomerModal(null,true)">+ New customer</button></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Vehicle <span class="req">*</span></label>
+          <select class="form-control" id="bk-veh" onchange="calcBookingTotal()"><option value="">— select —</option>${vehOpts}</select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Start Date <span class="req">*</span></label>
+          <input type="date" class="form-control" id="bk-start" value="${b?.startDate||todayStr()}" onchange="calcBookingTotal()">
+        </div>
+        <div class="form-group">
+          <label class="form-label">End Date <span class="req">*</span></label>
+          <input type="date" class="form-control" id="bk-end" value="${b?.endDate||''}" onchange="calcBookingTotal()">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Daily Rate (֏)</label>
+          <input type="number" class="form-control" id="bk-rate" value="${b?.dailyRate||''}" placeholder="auto from vehicle" oninput="calcBookingTotal()">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Total Amount (֏)</label>
+          <input type="number" class="form-control" id="bk-total" value="${b?.totalAmount||''}" placeholder="auto calculated">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Deposit (֏)</label>
+          <input type="number" class="form-control" id="bk-deposit" value="${b?.deposit||''}">
+        </div>
+        ${b?`<div class="form-group"><label class="form-label">Return Date</label><input type="date" class="form-control" id="bk-return" value="${b?.returnDate||''}"></div>`:'<div></div>'}
+        <div class="form-group form-full">
+          <label class="form-label">Notes</label>
+          <textarea class="form-control" id="bk-notes">${b?.notes||''}</textarea>
+        </div>
+        ${b?`<div class="form-group form-full"><label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="bk-cancel" ${b.cancelled===true||String(b.cancelled).toLowerCase()==='true'?'checked':''}> Mark as Cancelled</label></div>`:''}
+      </div>
+    </div>
+    <div class="modal-footer">
+      ${b?`<button class="btn btn-danger" onclick="deleteBooking('${b.id}')">Delete</button>`:''}
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveBooking('${b?.id||''}')">Save</button>
+    </div>
+  </div></div>`);
+}
+
+function calcBookingTotal() {
+  const start=document.getElementById('bk-start')?.value, end=document.getElementById('bk-end')?.value;
+  const vSel=document.getElementById('bk-veh'), rateEl=document.getElementById('bk-rate'), totEl=document.getElementById('bk-total');
+  if(!start||!end||!totEl) return;
+  let rate=Number(rateEl?.value);
+  if(!rate&&vSel?.value){rate=Number(vSel.options[vSel.selectedIndex]?.dataset?.rate)||0;if(rate&&rateEl)rateEl.value=rate;}
+  if(rate&&end>=start) totEl.value=rate*diffDays(start,end);
+}
+
+async function saveBooking(id) {
+  const customerId=document.getElementById('bk-cust').value, vehicleId=document.getElementById('bk-veh').value;
+  const startDate=document.getElementById('bk-start').value, endDate=document.getElementById('bk-end').value;
+  if(!customerId||!vehicleId||!startDate||!endDate){toast('Fill required fields','error');return;}
+  if(endDate<startDate){toast('End must be after start','error');return;}
+  const booking={
+    id:id||uid(), customerId, vehicleId, startDate, endDate,
+    returnDate:document.getElementById('bk-return')?.value||'',
+    dailyRate:Number(document.getElementById('bk-rate').value)||0,
+    totalAmount:Number(document.getElementById('bk-total').value)||0,
+    deposit:Number(document.getElementById('bk-deposit').value)||0,
+    cancelled:document.getElementById('bk-cancel')?.checked||false,
+    notes:document.getElementById('bk-notes').value.trim(),
+    createdAt:id?(state.bookings.find(b=>b.id===id)?.createdAt||todayStr()):todayStr(),
+  };
+  closeModal();
+  try {
+    if(!GAS_URL.includes('YOUR_DEPLOYMENT_ID')){const r=await callApi({action:'saveBooking',data:JSON.stringify(booking)});if(r.error)throw new Error(r.error);booking.id=r.id||booking.id;}
+    const idx=state.bookings.findIndex(b=>b.id===id);
+    if(idx>=0)state.bookings[idx]=booking;else state.bookings.push(booking);
+    toast(id?'Booking updated':'Booking created','success');
+  }catch(e){toast('Save failed: '+e.message,'error');}
+  renderPage();
+}
+
+async function deleteBooking(id) {
+  if(!confirm('Delete this booking?'))return;
+  closeModal();
+  try{if(!GAS_URL.includes('YOUR_DEPLOYMENT_ID'))await callApi({action:'deleteBooking',id});state.bookings=state.bookings.filter(b=>b.id!==id);state.payments=state.payments.filter(p=>p.bookingId!==id);toast('Deleted','success');}catch(e){toast('Error: '+e.message,'error');}
+  renderPage();
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// MODAL: RETURN
+// ──────────────────────────────────────────────────────────────────────────
+function openReturnModal(bookingId) {
+  const b=state.bookings.find(x=>x.id===bookingId); if(!b)return;
+  const paid=bookingPaid(bookingId), bal=(Number(b.totalAmount)||0)-paid;
+  openModal(`<div class="modal-overlay"><div class="modal">
+    <div class="modal-header"><div class="modal-title">Return Vehicle</div>${CLOSE_BTN}</div>
+    <div class="modal-body">
+      <div class="info-list" style="margin-bottom:16px">
+        <div class="info-row"><span class="info-key">Customer</span><span class="info-val">${customerName(b.customerId)}</span></div>
+        <div class="info-row"><span class="info-key">Vehicle</span><span class="info-val">${vehicleLabel(b.vehicleId)}</span></div>
+        <div class="info-row"><span class="info-key">Planned return</span><span class="info-val">${fmtDate(b.endDate)}</span></div>
+        <div class="info-row"><span class="info-key">Total</span><span class="info-val">${amd(b.totalAmount)}</span></div>
+        <div class="info-row"><span class="info-key">Paid</span><span class="info-val" style="color:var(--success)">${amd(paid)}</span></div>
+        <div class="info-row"><span class="info-key">Balance</span><span class="info-val" style="color:${bal>0?'var(--danger)':'var(--success)'}">${amd(bal)}</span></div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Actual Return Date</label>
+        <input type="date" class="form-control" id="ret-date" value="${todayStr()}">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmReturn('${b.id}')">Confirm Return</button>
+    </div>
+  </div></div>`);
+}
+
+async function confirmReturn(bookingId) {
+  const returnDate=document.getElementById('ret-date').value;
+  const b=state.bookings.find(x=>x.id===bookingId); if(!b)return;
+  const updated={...b,returnDate};
+  closeModal();
+  try{if(!GAS_URL.includes('YOUR_DEPLOYMENT_ID')){const r=await callApi({action:'saveBooking',data:JSON.stringify(updated)});if(r.error)throw new Error(r.error);}const idx=state.bookings.findIndex(x=>x.id===bookingId);if(idx>=0)state.bookings[idx]=updated;toast('Vehicle returned','success');}catch(e){toast('Error: '+e.message,'error');}
+  renderPage();
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// MODAL: PAYMENT
+// ──────────────────────────────────────────────────────────────────────────
+function openPaymentModal(bookingId) {
+  const b=state.bookings.find(x=>x.id===bookingId); if(!b)return;
+  const bal=Math.max(0,(Number(b.totalAmount)||0)-bookingPaid(bookingId));
+  openModal(`<div class="modal-overlay"><div class="modal">
+    <div class="modal-header"><div class="modal-title">Record Payment</div>${CLOSE_BTN}</div>
+    <div class="modal-body">
+      <div class="info-list" style="margin-bottom:16px">
+        <div class="info-row"><span class="info-key">Customer</span><span class="info-val">${customerName(b.customerId)}</span></div>
+        <div class="info-row"><span class="info-key">Vehicle</span><span class="info-val">${vehicleLabelShort(b.vehicleId)}</span></div>
+        <div class="info-row"><span class="info-key">Balance due</span><span class="info-val" style="color:var(--danger)">${amd(bal)}</span></div>
+      </div>
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">Amount (֏) <span class="req">*</span></label><input type="number" class="form-control" id="pay-amt" value="${bal||''}"></div>
+        <div class="form-group"><label class="form-label">Date <span class="req">*</span></label><input type="date" class="form-control" id="pay-date" value="${todayStr()}"></div>
+        <div class="form-group"><label class="form-label">Method</label><select class="form-control" id="pay-meth"><option>Cash</option><option>Card</option><option>Transfer</option></select></div>
+        <div class="form-group"><label class="form-label">Type</label><select class="form-control" id="pay-type"><option>Rental</option><option>Deposit</option><option>Extra</option></select></div>
+        <div class="form-group form-full"><label class="form-label">Notes</label><input type="text" class="form-control" id="pay-notes" placeholder="Optional"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="savePayment('${bookingId}')">Save Payment</button>
+    </div>
+  </div></div>`);
+}
+
+async function savePayment(bookingId) {
+  const amount=Number(document.getElementById('pay-amt').value), date=document.getElementById('pay-date').value;
+  if(!amount||!date){toast('Enter amount and date','error');return;}
+  const payment={id:uid(),bookingId,amount,date,method:document.getElementById('pay-meth').value,type:document.getElementById('pay-type').value,notes:document.getElementById('pay-notes').value.trim()};
+  closeModal();
+  try{if(!GAS_URL.includes('YOUR_DEPLOYMENT_ID')){const r=await callApi({action:'savePayment',data:JSON.stringify(payment)});if(r.error)throw new Error(r.error);payment.id=r.id||payment.id;}state.payments.push(payment);toast('Payment recorded','success');}catch(e){toast('Error: '+e.message,'error');}
+  renderPage();
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// MODAL: VEHICLE
+// ──────────────────────────────────────────────────────────────────────────
+function openVehicleModal(vehicleId) {
+  const v=vehicleId?state.vehicles.find(x=>x.id===vehicleId):null;
+  openModal(`<div class="modal-overlay"><div class="modal modal-wide">
+    <div class="modal-header"><div class="modal-title">${v?'Edit Vehicle':'Add Vehicle'}</div>${CLOSE_BTN}</div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">Make <span class="req">*</span></label><input type="text" class="form-control" id="v-make" value="${v?.make||''}" placeholder="Toyota"></div>
+        <div class="form-group"><label class="form-label">Model <span class="req">*</span></label><input type="text" class="form-control" id="v-model" value="${v?.model||''}" placeholder="Camry"></div>
+        <div class="form-group"><label class="form-label">Year</label><input type="number" class="form-control" id="v-year" value="${v?.year||''}" placeholder="2022"></div>
+        <div class="form-group"><label class="form-label">License Plate <span class="req">*</span></label><input type="text" class="form-control" id="v-plate" value="${v?.plate||''}" placeholder="AB 123 CD"></div>
+        <div class="form-group"><label class="form-label">Color</label><input type="text" class="form-control" id="v-color" value="${v?.color||''}" placeholder="Black"></div>
+        <div class="form-group"><label class="form-label">Daily Rate (֏) <span class="req">*</span></label><input type="number" class="form-control" id="v-rate" value="${v?.dailyRate||''}" placeholder="15000"></div>
+        <div class="form-group"><label class="form-label">Mileage (km)</label><input type="number" class="form-control" id="v-mileage" value="${v?.mileage||''}"></div>
+        <div class="form-group"><label class="form-label">Status</label><select class="form-control" id="v-status">${['Available','Maintenance','Inactive'].map(s=>`<option ${(v?.status||'Available')===s?'selected':''}>${s}</option>`).join('')}</select></div>
+        <div class="form-group"><label class="form-label">Insurance Expiry</label><input type="date" class="form-control" id="v-ins" value="${v?.insuranceExpiry||''}"></div>
+        <div class="form-group"><label class="form-label">Registration Expiry</label><input type="date" class="form-control" id="v-reg" value="${v?.regExpiry||''}"></div>
+        <div class="form-group form-full"><label class="form-label">Notes</label><textarea class="form-control" id="v-notes">${v?.notes||''}</textarea></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      ${v?`<button class="btn btn-danger" onclick="deleteVehicle('${v.id}')">Delete</button>`:''}
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveVehicle('${v?.id||''}')">Save</button>
+    </div>
+  </div></div>`);
+}
+
+async function saveVehicle(id) {
+  const make=document.getElementById('v-make').value.trim(),model=document.getElementById('v-model').value.trim(),plate=document.getElementById('v-plate').value.trim(),dailyRate=Number(document.getElementById('v-rate').value);
+  if(!make||!model||!plate||!dailyRate){toast('Fill required fields','error');return;}
+  const vehicle={id:id||uid(),make,model,plate,dailyRate,year:document.getElementById('v-year').value,color:document.getElementById('v-color').value.trim(),mileage:Number(document.getElementById('v-mileage').value)||'',status:document.getElementById('v-status').value,insuranceExpiry:document.getElementById('v-ins').value,regExpiry:document.getElementById('v-reg').value,notes:document.getElementById('v-notes').value.trim()};
+  closeModal();
+  try{if(!GAS_URL.includes('YOUR_DEPLOYMENT_ID')){const r=await callApi({action:'saveVehicle',data:JSON.stringify(vehicle)});if(r.error)throw new Error(r.error);vehicle.id=r.id||vehicle.id;}const idx=state.vehicles.findIndex(v=>v.id===id);if(idx>=0)state.vehicles[idx]=vehicle;else state.vehicles.push(vehicle);toast(id?'Vehicle updated':'Vehicle added','success');}catch(e){toast('Save failed: '+e.message,'error');}
+  renderPage();
+}
+
+async function deleteVehicle(id) {
+  if(state.bookings.some(b=>b.vehicleId===id&&(bookingStatus(b)==='Active'||bookingStatus(b)==='Upcoming'))){toast('Cannot delete: vehicle has active bookings','error');return;}
+  if(!confirm('Delete this vehicle?'))return;
+  closeModal();
+  try{if(!GAS_URL.includes('YOUR_DEPLOYMENT_ID'))await callApi({action:'deleteVehicle',id});state.vehicles=state.vehicles.filter(v=>v.id!==id);toast('Vehicle deleted','success');}catch(e){toast('Error: '+e.message,'error');}
+  renderPage();
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// MODAL: CUSTOMER
+// ──────────────────────────────────────────────────────────────────────────
+function openCustomerModal(customerId, fromBooking) {
+  const c=customerId?state.customers.find(x=>x.id===customerId):null;
+  openModal(`<div class="modal-overlay"><div class="modal">
+    <div class="modal-header"><div class="modal-title">${c?'Edit Customer':'New Customer'}</div>${CLOSE_BTN}</div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-group form-full"><label class="form-label">Full Name <span class="req">*</span></label><input type="text" class="form-control" id="cu-name" value="${c?.name||''}" placeholder="Ara Petrosyan"></div>
+        <div class="form-group"><label class="form-label">Phone <span class="req">*</span></label><input type="tel" class="form-control" id="cu-phone" value="${c?.phone||''}" placeholder="+374 91 000000"></div>
+        <div class="form-group"><label class="form-label">Email</label><input type="email" class="form-control" id="cu-email" value="${c?.email||''}"></div>
+        <div class="form-group"><label class="form-label">ID / Passport №</label><input type="text" class="form-control" id="cu-id" value="${c?.idNumber||''}"></div>
+        <div class="form-group"><label class="form-label">Driver's License №</label><input type="text" class="form-control" id="cu-lic" value="${c?.licenseNumber||''}"></div>
+        <div class="form-group form-full"><label class="form-label">Address</label><input type="text" class="form-control" id="cu-addr" value="${c?.address||''}"></div>
+        <div class="form-group form-full"><label class="form-label">Notes</label><textarea class="form-control" id="cu-notes">${c?.notes||''}</textarea></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      ${c?`<button class="btn btn-danger" onclick="deleteCustomer('${c.id}')">Delete</button>`:''}
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveCustomer('${c?.id||''}',${!!fromBooking})">Save</button>
+    </div>
+  </div></div>`);
+}
+
+async function saveCustomer(id, fromBooking) {
+  const name=document.getElementById('cu-name').value.trim(),phone=document.getElementById('cu-phone').value.trim();
+  if(!name||!phone){toast('Name and phone required','error');return;}
+  const customer={id:id||uid(),name,phone,email:document.getElementById('cu-email').value.trim(),idNumber:document.getElementById('cu-id').value.trim(),licenseNumber:document.getElementById('cu-lic').value.trim(),address:document.getElementById('cu-addr').value.trim(),notes:document.getElementById('cu-notes').value.trim(),createdAt:id?(state.customers.find(c=>c.id===id)?.createdAt||todayStr()):todayStr()};
+  closeModal();
+  try{if(!GAS_URL.includes('YOUR_DEPLOYMENT_ID')){const r=await callApi({action:'saveCustomer',data:JSON.stringify(customer)});if(r.error)throw new Error(r.error);customer.id=r.id||customer.id;}const idx=state.customers.findIndex(c=>c.id===id);if(idx>=0)state.customers[idx]=customer;else state.customers.push(customer);toast(id?'Customer updated':'Customer added','success');}catch(e){toast('Save failed: '+e.message,'error');}
+  if(fromBooking)openBookingModal(null,customer.id);else renderPage();
+}
+
+async function deleteCustomer(id) {
+  if(state.bookings.some(b=>b.customerId===id&&(bookingStatus(b)==='Active'||bookingStatus(b)==='Upcoming'))){toast('Cannot delete: customer has active bookings','error');return;}
+  if(!confirm('Delete this customer?'))return;
+  closeModal();
+  try{if(!GAS_URL.includes('YOUR_DEPLOYMENT_ID'))await callApi({action:'deleteCustomer',id});state.customers=state.customers.filter(c=>c.id!==id);toast('Customer deleted','success');}catch(e){toast('Error: '+e.message,'error');}
+  renderPage();
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// MODAL: EXPENSE
+// ──────────────────────────────────────────────────────────────────────────
+function openExpenseModal(expenseId, prefillVehicleId) {
+  const e=expenseId?state.expenses.find(x=>x.id===expenseId):null;
+  const vOpts=state.vehicles.map(v=>`<option value="${v.id}" ${(e?.vehicleId===v.id||prefillVehicleId===v.id)?'selected':''}>${v.make} ${v.model} · ${v.plate}</option>`).join('');
+  openModal(`<div class="modal-overlay"><div class="modal">
+    <div class="modal-header"><div class="modal-title">${e?'Edit Expense':'Add Expense'}</div>${CLOSE_BTN}</div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">Category <span class="req">*</span></label><select class="form-control" id="ex-cat">${['Fuel','Maintenance','Insurance','Registration','Fine','Cleaning','Other'].map(c=>`<option ${e?.category===c?'selected':''}>${c}</option>`).join('')}</select></div>
+        <div class="form-group"><label class="form-label">Amount (֏) <span class="req">*</span></label><input type="number" class="form-control" id="ex-amt" value="${e?.amount||''}"></div>
+        <div class="form-group"><label class="form-label">Date <span class="req">*</span></label><input type="date" class="form-control" id="ex-date" value="${e?.date||todayStr()}"></div>
+        <div class="form-group"><label class="form-label">Vehicle</label><select class="form-control" id="ex-veh"><option value="">— general —</option>${vOpts}</select></div>
+        <div class="form-group form-full"><label class="form-label">Description</label><input type="text" class="form-control" id="ex-desc" value="${e?.description||''}" placeholder="Oil change, fuel fill-up…"></div>
+        <div class="form-group form-full"><label class="form-label">Notes</label><textarea class="form-control" id="ex-notes" style="min-height:50px">${e?.notes||''}</textarea></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveExpense('${e?.id||''}')">Save</button>
+    </div>
+  </div></div>`);
+}
+
+async function saveExpense(id) {
+  const amount=Number(document.getElementById('ex-amt').value),date=document.getElementById('ex-date').value;
+  if(!amount||!date){toast('Enter amount and date','error');return;}
+  const expense={id:id||uid(),category:document.getElementById('ex-cat').value,amount,date,vehicleId:document.getElementById('ex-veh').value,description:document.getElementById('ex-desc').value.trim(),notes:document.getElementById('ex-notes').value.trim()};
+  closeModal();
+  try{if(!GAS_URL.includes('YOUR_DEPLOYMENT_ID')){const r=await callApi({action:'saveExpense',data:JSON.stringify(expense)});if(r.error)throw new Error(r.error);expense.id=r.id||expense.id;}const idx=state.expenses.findIndex(e=>e.id===id);if(idx>=0)state.expenses[idx]=expense;else state.expenses.push(expense);toast(id?'Expense updated':'Expense added','success');}catch(e){toast('Error: '+e.message,'error');}
+  renderPage();
+}
+
+async function deleteExpense(id) {
+  if(!confirm('Delete this expense?'))return;
+  try{if(!GAS_URL.includes('YOUR_DEPLOYMENT_ID'))await callApi({action:'deleteExpense',id});state.expenses=state.expenses.filter(e=>e.id!==id);toast('Deleted','success');}catch(e){toast('Error: '+e.message,'error');}
+  renderPage();
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// BOOT
+// ──────────────────────────────────────────────────────────────────────────
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
+fetchAll();
