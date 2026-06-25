@@ -462,8 +462,7 @@ function calcBookingTotal() {
 async function saveBooking(id) {
   const customerId=document.getElementById('bk-cust').value, vehicleId=document.getElementById('bk-veh').value;
   const startDate=document.getElementById('bk-start').value, endDate=document.getElementById('bk-end').value;
-  if(!customerId||!vehicleId||!startDate||!endDate){toast('Fill required fields','error');return;}
-  if(endDate<startDate){toast('End must be after start','error');return;}
+  if(startDate&&endDate&&endDate<startDate){toast('End date must be after start','error');return;}
   const booking={
     id:id||uid(), customerId, vehicleId, startDate, endDate,
     returnDate:document.getElementById('bk-return')?.value||'',
@@ -559,8 +558,7 @@ function openPaymentModal(bookingId) {
 }
 
 async function savePayment(bookingId) {
-  const amount=Number(document.getElementById('pay-amt').value), date=document.getElementById('pay-date').value;
-  if(!amount||!date){toast('Enter amount and date','error');return;}
+  const amount=Number(document.getElementById('pay-amt').value)||0, date=document.getElementById('pay-date').value;
   const payment={id:uid(),bookingId,amount,date,method:document.getElementById('pay-meth').value,type:document.getElementById('pay-type').value,notes:document.getElementById('pay-notes').value.trim()};
   closeModal();
   try{if(!GAS_URL.includes('YOUR_DEPLOYMENT_ID')){const r=await callApi({action:'savePayment',data:JSON.stringify(payment)});if(r.error)throw new Error(r.error);payment.id=r.id||payment.id;}state.payments.push(payment);toast('Payment recorded','success');}catch(e){toast('Error: '+e.message,'error');}
@@ -598,8 +596,7 @@ function openVehicleModal(vehicleId) {
 }
 
 async function saveVehicle(id) {
-  const make=document.getElementById('v-make').value.trim(),model=document.getElementById('v-model').value.trim(),plate=document.getElementById('v-plate').value.trim(),dailyRate=Number(document.getElementById('v-rate').value);
-  if(!make||!model||!plate||!dailyRate){toast('Fill required fields','error');return;}
+  const make=document.getElementById('v-make').value.trim(),model=document.getElementById('v-model').value.trim(),plate=document.getElementById('v-plate').value.trim(),dailyRate=Number(document.getElementById('v-rate').value)||0;
   const vehicle={id:id||uid(),make,model,plate,dailyRate,year:document.getElementById('v-year').value,color:document.getElementById('v-color').value.trim(),mileage:Number(document.getElementById('v-mileage').value)||'',status:document.getElementById('v-status').value,insuranceExpiry:document.getElementById('v-ins').value,regExpiry:document.getElementById('v-reg').value,notes:document.getElementById('v-notes').value.trim()};
   closeModal();
   try{if(!GAS_URL.includes('YOUR_DEPLOYMENT_ID')){const r=await callApi({action:'saveVehicle',data:JSON.stringify(vehicle)});if(r.error)throw new Error(r.error);vehicle.id=r.id||vehicle.id;}const idx=state.vehicles.findIndex(v=>v.id===id);if(idx>=0)state.vehicles[idx]=vehicle;else state.vehicles.push(vehicle);toast(id?'Vehicle updated':'Vehicle added','success');}catch(e){toast('Save failed: '+e.message,'error');}
@@ -642,7 +639,6 @@ function openCustomerModal(customerId, fromBooking) {
 
 async function saveCustomer(id, fromBooking) {
   const name=document.getElementById('cu-name').value.trim(),phone=document.getElementById('cu-phone').value.trim();
-  if(!name||!phone){toast('Name and phone required','error');return;}
   const customer={id:id||uid(),name,phone,email:document.getElementById('cu-email').value.trim(),idNumber:document.getElementById('cu-id').value.trim(),licenseNumber:document.getElementById('cu-lic').value.trim(),address:document.getElementById('cu-addr').value.trim(),notes:document.getElementById('cu-notes').value.trim(),createdAt:id?(state.customers.find(c=>c.id===id)?.createdAt||todayStr()):todayStr()};
   closeModal();
   try{if(!GAS_URL.includes('YOUR_DEPLOYMENT_ID')){const r=await callApi({action:'saveCustomer',data:JSON.stringify(customer)});if(r.error)throw new Error(r.error);customer.id=r.id||customer.id;}const idx=state.customers.findIndex(c=>c.id===id);if(idx>=0)state.customers[idx]=customer;else state.customers.push(customer);toast(id?'Customer updated':'Customer added','success');}catch(e){toast('Save failed: '+e.message,'error');}
@@ -683,8 +679,7 @@ function openExpenseModal(expenseId, prefillVehicleId) {
 }
 
 async function saveExpense(id) {
-  const amount=Number(document.getElementById('ex-amt').value),date=document.getElementById('ex-date').value;
-  if(!amount||!date){toast('Enter amount and date','error');return;}
+  const amount=Number(document.getElementById('ex-amt').value)||0,date=document.getElementById('ex-date').value;
   const expense={id:id||uid(),category:document.getElementById('ex-cat').value,amount,date,vehicleId:document.getElementById('ex-veh').value,description:document.getElementById('ex-desc').value.trim(),notes:document.getElementById('ex-notes').value.trim()};
   closeModal();
   try{if(!GAS_URL.includes('YOUR_DEPLOYMENT_ID')){const r=await callApi({action:'saveExpense',data:JSON.stringify(expense)});if(r.error)throw new Error(r.error);expense.id=r.id||expense.id;}const idx=state.expenses.findIndex(e=>e.id===id);if(idx>=0)state.expenses[idx]=expense;else state.expenses.push(expense);toast(id?'Expense updated':'Expense added','success');}catch(e){toast('Error: '+e.message,'error');}
