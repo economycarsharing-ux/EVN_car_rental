@@ -87,9 +87,9 @@ function customerName(id)     { const c=customerById(id); return c?c.name:'—';
 function vehicleLabelShort(id){
   const v=vehicleById(id); if(!v)return '—';
   const model=[v.make,v.model].filter(Boolean).join(' ');
-  return v.plate?`${model} · ${v.plate}`:(model||'—');
+  return v.plate?`${v.plate} · ${model}`:(model||'—');
 }
-function vehicleLabel(id)     { const v=vehicleById(id); return v?`${v.make} ${v.model} · ${v.plate}`:'—'; }
+function vehicleLabel(id)     { return vehicleLabelShort(id); }
 
 function statusBadge(st) {
   const m={Active:'badge-active',Upcoming:'badge-upcoming',Completed:'badge-completed',Cancelled:'badge-cancelled',Overdue:'badge-overdue'};
@@ -416,7 +416,7 @@ function renderFinances(body, actions) {
       ${Object.keys(byVehicle).length?`<div class="card"><div class="card-header"><div class="card-title">Expenses by Vehicle</div></div><div class="card-body">${barList(byVehicle,expTotal,'var(--warning)')}</div></div>`:''}
       <div class="card">
         <div class="card-header"><div class="card-title">Recent Payments</div></div>
-        <div class="table-wrap">${recentPay.length?`<table><thead><tr><th>Date</th><th>Customer</th><th>Method</th><th>Type</th><th>Amount</th></tr></thead><tbody>${recentPay.map(p=>{const b=state.bookings.find(x=>x.id===p.bookingId);return `<tr><td>${fmtDate(p.date)}</td><td>${b?customerName(b.customerId):'—'}</td><td>${p.method||'—'}</td><td>${p.type||'—'}</td><td class="td-mono" style="color:var(--success);font-weight:600">${amd(p.amount)}</td></tr>`;}).join('')}</tbody></table>`:'<div class="empty-state">No payments in period</div>'}</div>
+        <div class="table-wrap">${recentPay.length?`<table><thead><tr><th>Date</th><th>Customer</th><th>Vehicle</th><th>Method</th><th>Type</th><th>Amount</th></tr></thead><tbody>${recentPay.map(p=>{const b=state.bookings.find(x=>x.id===p.bookingId);return `<tr><td>${fmtDate(p.date)}</td><td>${b?customerName(b.customerId):'—'}</td><td>${b?vehicleLabelShort(b.vehicleId):'—'}</td><td>${p.method||'—'}</td><td>${p.type||'—'}</td><td class="td-mono" style="color:var(--success);font-weight:600">${amd(p.amount)}</td></tr>`;}).join('')}</tbody></table>`:'<div class="empty-state">No payments in period</div>'}</div>
       </div>
       <div class="card dash-full">
         <div class="card-header"><div class="card-title">Expenses</div></div>
@@ -436,7 +436,7 @@ function renderFinances(body, actions) {
 function openBookingModal(bookingId, prefillCustomerId) {
   const b=bookingId?state.bookings.find(x=>x.id===bookingId):null;
   const custOpts=state.customers.map(c=>`<option value="${c.id}" ${(b?.customerId===c.id||prefillCustomerId===c.id)?'selected':''}>${c.name} — ${c.phone||''}</option>`).join('');
-  const vehOpts=state.vehicles.filter(v=>v.status!=='Inactive').map(v=>`<option value="${v.id}" ${b?.vehicleId===v.id?'selected':''} data-rate="${v.dailyRate}">${v.make} ${v.model} · ${v.plate} (${amd(v.dailyRate)}/d)</option>`).join('');
+  const vehOpts=state.vehicles.filter(v=>v.status!=='Inactive').map(v=>`<option value="${v.id}" ${b?.vehicleId===v.id?'selected':''} data-rate="${v.dailyRate}">${v.plate} · ${v.make} ${v.model} (${amd(v.dailyRate)}/d)</option>`).join('');
 
   openModal(`<div class="modal-overlay"><div class="modal modal-wide">
     <div class="modal-header"><div class="modal-title">${b?'Edit Booking':'New Booking'}</div>${CLOSE_BTN}</div>
@@ -591,7 +591,7 @@ function openPaymentModal(bookingId) {
   const b=state.bookings.find(x=>x.id===bookingId); if(!b)return;
   const bal=Math.max(0,(Number(b.totalAmount)||0)-bookingPaid(bookingId));
   openModal(`<div class="modal-overlay"><div class="modal">
-    <div class="modal-header"><div class="modal-title">Record Payment</div>${CLOSE_BTN}</div>
+    <div class="modal-header"><div class="modal-title">Record Payment · ${vehicleLabelShort(b.vehicleId)}</div>${CLOSE_BTN}</div>
     <div class="modal-body">
       <div class="info-list" style="margin-bottom:16px">
         <div class="info-row"><span class="info-key">Customer</span><span class="info-val">${customerName(b.customerId)}</span></div>
@@ -734,7 +734,7 @@ const OLD_PART_DISPOSITIONS = ['—','Stored in garage','Discarded','Returned to
 function openExpenseModal(expenseId, prefillVehicleId) {
   const e=expenseId?state.expenses.find(x=>x.id===expenseId):null;
   const curType=e?.type||e?.category||'Part';
-  const vOpts=state.vehicles.map(v=>`<option value="${v.id}" ${(e?.vehicleId===v.id||prefillVehicleId===v.id)?'selected':''}>${v.make} ${v.model} · ${v.plate}</option>`).join('');
+  const vOpts=state.vehicles.map(v=>`<option value="${v.id}" ${(e?.vehicleId===v.id||prefillVehicleId===v.id)?'selected':''}>${v.plate} · ${v.make} ${v.model}</option>`).join('');
   const sOpts=state.stakeholders.map(s=>`<option value="${s.id}" ${e?.stakeholderId===s.id?'selected':''}>${s.name}${s.type?' ('+s.type+')':''}</option>`).join('');
   const showPart=curType==='Part';
   const showStake=curType==='Part'||curType==='Service';

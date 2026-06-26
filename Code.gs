@@ -6,8 +6,9 @@ var SS = SpreadsheetApp.getActiveSpreadsheet();
 var SHEETS = {
   vehicles:     { name: 'Vehicles',     cols: ['id','make','model','year','plate','color','status','dailyRate','mileage','insuranceExpiry','regExpiry','notes'] },
   customers:    { name: 'Customers',    cols: ['id','name','phone','email','idNumber','licenseNumber','address','notes','createdAt'] },
-  bookings:     { name: 'Bookings',     cols: ['id','customerId','vehicleId','startDate','endDate','returnDate','dailyRate','totalAmount','deposit','cancelled','notes','createdAt','startTime','endTime','returnTime'] },
-  payments:     { name: 'Payments',     cols: ['id','bookingId','amount','date','method','type','notes'] },
+  // Bookings is the single ledger for both booking and customer-payment rows.
+  // Existing booking rows without recordType are still treated as bookings.
+  bookings:     { name: 'Bookings',     cols: ['id','recordType','customerId','vehicleId','startDate','endDate','returnDate','dailyRate','totalAmount','deposit','cancelled','notes','createdAt','startTime','endTime','returnTime','bookingId','amount','date','method','type'] },
   // Expenses is the single ledger for both expense and stakeholder records.
   // Existing expense rows without recordType are still treated as expenses.
   expenses:     { name: 'Expenses',     cols: ['id','recordType','vehicleId','type','amount','date','stakeholderId','partName','partCategory','replacedPartCondition','replacedPartDisposition','description','notes','name','stakeholderType','phone','stakeholderNotes'] },
@@ -23,10 +24,10 @@ function doGet(e) {
     else if (action === 'deleteVehicle')      result = deleteRow('vehicles',   e.parameter.id);
     else if (action === 'saveCustomer')       result = saveRow('customers',    JSON.parse(e.parameter.data));
     else if (action === 'deleteCustomer')     result = deleteRow('customers',  e.parameter.id);
-    else if (action === 'saveBooking')        result = saveRow('bookings',     JSON.parse(e.parameter.data));
-    else if (action === 'deleteBooking')      result = deleteRow('bookings',   e.parameter.id);
-    else if (action === 'savePayment')        result = saveRow('payments',     JSON.parse(e.parameter.data));
-    else if (action === 'deletePayment')      result = deleteRow('payments',   e.parameter.id);
+    else if (action === 'saveBooking')        result = saveBookingRow(JSON.parse(e.parameter.data));
+    else if (action === 'deleteBooking')      result = deleteBookingRow(e.parameter.id);
+    else if (action === 'savePayment')        result = savePaymentRow(JSON.parse(e.parameter.data));
+    else if (action === 'deletePayment')      result = deletePaymentRow(e.parameter.id);
     else if (action === 'saveExpense')        result = saveRow('expenses',     JSON.parse(e.parameter.data));
     else if (action === 'deleteExpense')      result = deleteRow('expenses',   e.parameter.id);
     else if (action === 'saveStakeholder')     result = saveStakeholderRow(JSON.parse(e.parameter.data));
@@ -43,6 +44,22 @@ function doGet(e) {
 
 // ── Read all data ──────────────────────────────────────────────────────────
 function getAll() {
+  var bookingLedger = readSheet('bookings');
+  var bookings = bookingLedger.filter(function(row) {
+    return String(row.recordType || '').toLowerCase() !== 'payment';
+  });
+  var payments = bookingLedger.filter(function(row) {
+    return String(row.recordType || '').toLowerCase() === 'payment';
+  }).map(paymentFromLedgerRow);
+
+  // Transition support for deployments that have not run the one-time
+  // migrateBookingLedger function yet.
+  readExistingSheet('Payments').forEach(function(row) {
+    if (!payments.some(function(p) { return String(p.id) === String(row.id); })) {
+      payments.push(row);
+    }
+  });
+
   var ledger = readSheet('expenses');
   var expenses = ledger.filter(function(row) {
     return String(row.recordType || '').toLowerCase() !== 'stakeholder';
@@ -62,11 +79,56 @@ function getAll() {
   return {
     vehicles:     readSheet('vehicles'),
     customers:    readSheet('customers'),
-    bookings:     readSheet('bookings'),
-    payments:     readSheet('payments'),
+    bookings:     bookings,
+    payments:     payments,
     expenses:     expenses,
     stakeholders: stakeholders,
   };
+}
+
+function paymentFromLedgerRow(row) {
+  return {
+    id: row.id,
+    bookingId: row.bookingId,
+    amount: row.amount,
+    date: row.date,
+    method: row.method,
+    type: row.type,
+    notes: row.notes
+  };
+}
+
+function saveBookingRow(obj) {
+  obj.recordType = 'booking';
+  return saveRow('bookings', obj);
+}
+
+function savePaymentRow(obj) {
+  return saveRow('bookings', {
+    id: obj.id,
+    recordType: 'payment',
+    bookingId: obj.bookingId,
+    amount: obj.amount,
+    date: obj.date,
+    method: obj.method,
+    type: obj.type,
+    notes: obj.notes
+  });
+}
+
+function deleteBookingRow(id) {
+  var result = deleteRow('bookings', id);
+  deleteRowsWhere(getSheet('bookings'), 'bookingId', id);
+  var legacyPayments = SS.getSheetByName('Payments');
+  if (legacyPayments) deleteRowsWhere(legacyPayments, 'bookingId', id);
+  return result;
+}
+
+function deletePaymentRow(id) {
+  var result = deleteRow('bookings', id);
+  var legacyPayments = SS.getSheetByName('Payments');
+  if (legacyPayments) deleteRowFromSheet(legacyPayments, id);
+  return result.ok ? result : { ok: true };
 }
 
 function stakeholderFromLedgerRow(row) {
@@ -203,6 +265,21 @@ function deleteRowFromSheet(sheet, id) {
   return { ok: false, error: 'Row not found' };
 }
 
+function deleteRowsWhere(sheet, columnName, value) {
+  var data = sheet.getDataRange().getValues();
+  if (!data.length) return 0;
+  var column = data[0].map(String).indexOf(columnName);
+  if (column < 0) return 0;
+  var deleted = 0;
+  for (var i = data.length - 1; i >= 1; i--) {
+    if (String(data[i][column]) === String(value)) {
+      sheet.deleteRow(i + 1);
+      deleted++;
+    }
+  }
+  return deleted;
+}
+
 // ── Setup / migration ──────────────────────────────────────────────────────
 // Run once after schema changes — safe to run on existing data.
 function setupSheets() {
@@ -224,6 +301,56 @@ function setupSheets() {
   });
   var msg = added.length ? 'Added: ' + added.join(', ') : 'All sheets already up to date.';
   SpreadsheetApp.getUi().alert(msg);
+}
+
+// One-time migration to the unified Bookings ledger.
+// Run once from the Apps Script editor after deploying this version.
+// Existing payment rows are copied into Bookings and the Payments tab is
+// removed after a successful copy.
+function migrateBookingLedger() {
+  var bookingSheet = getSheet('bookings');
+  var ledgerHeaders = bookingSheet.getRange(1, 1, 1, bookingSheet.getLastColumn()).getValues()[0].map(String);
+  SHEETS.bookings.cols.forEach(function(col) {
+    if (ledgerHeaders.indexOf(col) === -1) {
+      var newCol = bookingSheet.getLastColumn() + 1;
+      bookingSheet.getRange(1, newCol).setValue(col).setFontWeight('bold').setBackground('#1e3a5f').setFontColor('#ffffff');
+      ledgerHeaders.push(col);
+    }
+  });
+
+  var legacyPayments = readExistingSheet('Payments');
+  var existing = readSheet('bookings');
+  var existingIds = {};
+  existing.forEach(function(row) { existingIds[String(row.id)] = true; });
+
+  var imported = 0;
+  legacyPayments.forEach(function(payment) {
+    if (existingIds[String(payment.id)]) return;
+    savePaymentRow(payment);
+    existingIds[String(payment.id)] = true;
+    imported++;
+  });
+
+  var data = bookingSheet.getDataRange().getValues();
+  var headers = data[0].map(String);
+  var recordTypeCol = headers.indexOf('recordType');
+  if (recordTypeCol >= 0) {
+    for (var i = 1; i < data.length; i++) {
+      if (!data[i][recordTypeCol]) {
+        bookingSheet.getRange(i + 1, recordTypeCol + 1).setValue('booking');
+      }
+    }
+  }
+
+  var paymentSheet = SS.getSheetByName('Payments');
+  if (paymentSheet) SS.deleteSheet(paymentSheet);
+
+  return {
+    ok: true,
+    paymentsImported: imported,
+    sheetRemoved: paymentSheet ? 'Payments' : '',
+    ledgerSheet: 'Bookings'
+  };
 }
 
 // One-time migration to the unified Expenses ledger.

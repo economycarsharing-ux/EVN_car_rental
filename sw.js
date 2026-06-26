@@ -1,11 +1,11 @@
-const CACHE = 'car-rental-v9';
+const CACHE = 'car-rental-v11';
 
 const ASSETS = [
   './',
   './index.html',
   './style.css?v=1',
-  './app.js?v=10',
-  './config.js?v=4',
+  './app.js?v=11',
+  './config.js?v=5',
   './manifest.json',
   './icon.svg'
 ];
