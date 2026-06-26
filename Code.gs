@@ -33,6 +33,7 @@ function doGet(e) {
     else if (action === 'deleteStakeholder')         result = deleteRow('stakeholders',        e.parameter.id);
     else if (action === 'saveStakeholderPayment')    result = saveRow('stakeholder_payments',  JSON.parse(e.parameter.data));
     else if (action === 'deleteStakeholderPayment')  result = deleteRow('stakeholder_payments',e.parameter.id);
+    else if (action === 'migrateVehicleIds')         result = migrateVehicleIdsToPlates();
     else result = { error: 'Unknown action: ' + action };
   } catch(err) {
     result = { error: err.message };
@@ -171,10 +172,13 @@ function setupSheets() {
 // and updates every vehicleId reference in Bookings and Expenses to match.
 // SAFE: backs up Vehicles/Bookings/Expenses first, and only touches the
 // id / vehicleId columns (never the other expense columns). Run once.
+//
+// Run it via the web app URL:  <GAS_URL>?action=migrateVehicleIds
+// (Uses no getUi(), so it works from the web-app context of a standalone
+//  script — returns a JSON summary instead of showing a dialog.)
 function migrateVehicleIdsToPlates() {
-  var ui = SpreadsheetApp.getUi();
   var vSheet = SS.getSheetByName('Vehicles');
-  if (!vSheet) { ui.alert('No Vehicles sheet found.'); return; }
+  if (!vSheet) return { error: 'No Vehicles sheet found.' };
 
   // 1) Backup affected sheets
   var stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd_HHmmss');
@@ -188,7 +192,7 @@ function migrateVehicleIdsToPlates() {
   var vHead  = vData[0].map(String);
   var idC    = vHead.indexOf('id');
   var plateC = vHead.indexOf('plate');
-  if (idC < 0 || plateC < 0) { ui.alert('Vehicles sheet is missing an id or plate column.'); return; }
+  if (idC < 0 || plateC < 0) return { error: 'Vehicles sheet is missing an id or plate column.' };
 
   var map = {};   // oldId -> newId
   var used = {};  // newId -> true (collision guard, e.g. duplicate plate 37JI433)
@@ -226,9 +230,12 @@ function migrateVehicleIdsToPlates() {
     }
   });
 
-  ui.alert('Migration complete.\n\n' +
-           'Vehicles remapped: ' + Object.keys(map).length + '\n' +
-           'Bookings updated: '  + changed.Bookings + '\n' +
-           'Expenses updated: '  + changed.Expenses + '\n\n' +
-           'Backups saved with suffix  _BAK_' + stamp);
+  return {
+    ok: true,
+    vehiclesRemapped: Object.keys(map).length,
+    bookingsUpdated:  changed.Bookings,
+    expensesUpdated:  changed.Expenses,
+    backupSuffix:     '_BAK_' + stamp,
+    map: map
+  };
 }
