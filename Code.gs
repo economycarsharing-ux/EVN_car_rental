@@ -9,7 +9,8 @@ var SHEETS = {
   bookings:     { name: 'Bookings',     cols: ['id','customerId','vehicleId','startDate','endDate','returnDate','dailyRate','totalAmount','deposit','cancelled','notes','createdAt','startTime','endTime','returnTime'] },
   payments:     { name: 'Payments',     cols: ['id','bookingId','amount','date','method','type','notes'] },
   expenses:     { name: 'Expenses',     cols: ['id','vehicleId','type','amount','date','stakeholderId','partName','partCategory','replacedPartCondition','replacedPartDisposition','description','notes'] },
-  stakeholders: { name: 'Stakeholders', cols: ['id','name','type','phone','notes'] },
+  stakeholders:         { name: 'Stakeholders',         cols: ['id','name','type','phone','notes'] },
+  stakeholder_payments: { name: 'StakeholderPayments', cols: ['id','stakeholderId','date','amount','method','expenseIds','notes'] },
 };
 
 // ── Entry point ────────────────────────────────────────────────────────────
@@ -28,8 +29,10 @@ function doGet(e) {
     else if (action === 'deletePayment')      result = deleteRow('payments',   e.parameter.id);
     else if (action === 'saveExpense')        result = saveRow('expenses',     JSON.parse(e.parameter.data));
     else if (action === 'deleteExpense')      result = deleteRow('expenses',   e.parameter.id);
-    else if (action === 'saveStakeholder')    result = saveRow('stakeholders', JSON.parse(e.parameter.data));
-    else if (action === 'deleteStakeholder')  result = deleteRow('stakeholders',e.parameter.id);
+    else if (action === 'saveStakeholder')          result = saveRow('stakeholders',         JSON.parse(e.parameter.data));
+    else if (action === 'deleteStakeholder')         result = deleteRow('stakeholders',        e.parameter.id);
+    else if (action === 'saveStakeholderPayment')    result = saveRow('stakeholder_payments',  JSON.parse(e.parameter.data));
+    else if (action === 'deleteStakeholderPayment')  result = deleteRow('stakeholder_payments',e.parameter.id);
     else result = { error: 'Unknown action: ' + action };
   } catch(err) {
     result = { error: err.message };
@@ -46,8 +49,9 @@ function getAll() {
     customers:    readSheet('customers'),
     bookings:     readSheet('bookings'),
     payments:     readSheet('payments'),
-    expenses:     readSheet('expenses'),
-    stakeholders: readSheet('stakeholders'),
+    expenses:             readSheet('expenses'),
+    stakeholders:         readSheet('stakeholders'),
+    stakeholderPayments:  readSheet('stakeholder_payments'),
   };
 }
 

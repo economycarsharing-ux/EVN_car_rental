@@ -3,7 +3,7 @@
 // ── State ──────────────────────────────────────────────────────────────────
 const state = {
   page: 'dashboard',
-  vehicles: [], customers: [], bookings: [], payments: [], expenses: [], stakeholders: [],
+  vehicles: [], customers: [], bookings: [], payments: [], expenses: [], stakeholders: [], stakeholderPayments: [],
   loading: false,
   bookingFilter: 'all', bookingSearch: '',
   vehicleFilter: 'all',
@@ -31,7 +31,8 @@ async function fetchAll() {
     state.bookings    = d.bookings    || [];
     state.payments    = d.payments    || [];
     state.expenses    = d.expenses    || [];
-    state.stakeholders= d.stakeholders|| [];
+    state.stakeholders        = d.stakeholders        || [];
+    state.stakeholderPayments = d.stakeholderPayments || [];
   } catch (e) { toast('Failed to load: ' + e.message, 'error'); }
   state.loading = false; renderPage();
 }
@@ -356,6 +357,22 @@ function renderCustomers(body, actions) {
 // ──────────────────────────────────────────────────────────────────────────
 function stakeholderName(id) { const s=state.stakeholders.find(x=>x.id===id); return s?s.name:'—'; }
 
+function paidExpenseIdSet() {
+  const s=new Set();
+  state.stakeholderPayments.forEach(p=>{
+    if(p.expenseIds) p.expenseIds.split(',').forEach(id=>{const t=id.trim();if(t)s.add(t);});
+  });
+  return s;
+}
+
+function stakeholderStats(stakeholderId) {
+  const paid=paidExpenseIdSet();
+  const exps=state.expenses.filter(e=>e.stakeholderId===stakeholderId&&(e.type==='Part'||e.type==='Service'));
+  const billed=exps.reduce((s,e)=>s+(Number(e.amount)||0),0);
+  const paidAmt=exps.filter(e=>paid.has(e.id)).reduce((s,e)=>s+(Number(e.amount)||0),0);
+  return {billed, paidAmt, outstanding:billed-paidAmt};
+}
+
 function renderFinances(body, actions) {
   actions.innerHTML=`
     <select class="form-control" style="width:auto;font-size:12px" onchange="state.finPeriod=this.value;renderPage()">
@@ -402,7 +419,35 @@ function renderFinances(body, actions) {
     <div class="dash-grid">
       <div class="card"><div class="card-header"><div class="card-title">Income by Method</div></div><div class="card-body">${barList(byMethod,income,'var(--success)')}</div></div>
       <div class="card"><div class="card-header"><div class="card-title">Expenses by Type</div></div><div class="card-body">${barList(byType,expTotal,'var(--danger)')}</div></div>
-      ${Object.keys(byStakeholder).length?`<div class="card"><div class="card-header"><div class="card-title">Paid to Stakeholders</div><button class="btn btn-ghost btn-sm" onclick="openStakeholderModal()">Manage</button></div><div class="card-body">${barList(byStakeholder,expTotal,'#8b5cf6')}</div></div>`:''}
+      ${Object.keys(byStakeholder).length?(()=>{
+        const paid=paidExpenseIdSet();
+        const byStakePaid={},byStakeOut={};
+        exps.forEach(e=>{
+          if(!e.stakeholderId||!(e.type==='Part'||e.type==='Service')) return;
+          const k=stakeholderName(e.stakeholderId);
+          const amt=Number(e.amount)||0;
+          if(paid.has(e.id)){byStakePaid[k]=(byStakePaid[k]||0)+amt;}
+          else{byStakeOut[k]=(byStakeOut[k]||0)+amt;}
+        });
+        const outTotal=Object.values(byStakeOut).reduce((s,v)=>s+v,0);
+        return `<div class="card"><div class="card-header"><div class="card-title">Stakeholders — Paid vs Outstanding</div><button class="btn btn-primary btn-sm" onclick="openStakeholderModal()">Manage &amp; Pay</button></div>
+          <div class="card-body">
+            ${Object.keys({...byStakePaid,...byStakeOut}).sort().map(k=>{
+              const p=byStakePaid[k]||0, o=byStakeOut[k]||0, t=p+o;
+              const pPct=t>0?Math.round(p/t*100):0;
+              return `<div style="margin-bottom:10px">
+                <div style="display:flex;justify-content:space-between;margin-bottom:3px;font-size:12px">
+                  <span style="font-weight:600">${k}</span>
+                  <span style="color:var(--muted)">${o>0?`<span style="color:var(--danger)">⏳ ${amd(o)} due</span>`:'<span style="color:var(--success)">✓ settled</span>'}</span>
+                </div>
+                <div style="height:6px;border-radius:3px;background:var(--surface2);overflow:hidden;display:flex">
+                  <div style="width:${pPct}%;background:var(--success)"></div>
+                  <div style="width:${100-pPct}%;background:var(--danger);opacity:0.4"></div>
+                </div>
+              </div>`;
+            }).join('')}
+          </div></div>`;
+      })():''}
       ${Object.keys(byVehicle).length?`<div class="card"><div class="card-header"><div class="card-title">Expenses by Vehicle</div></div><div class="card-body">${barList(byVehicle,expTotal,'var(--warning)')}</div></div>`:''}
       <div class="card">
         <div class="card-header"><div class="card-title">Recent Payments</div></div>
@@ -410,11 +455,19 @@ function renderFinances(body, actions) {
       </div>
       <div class="card dash-full">
         <div class="card-header"><div class="card-title">Expenses</div></div>
-        <div class="table-wrap">${recentExp.length?`<table><thead><tr><th>Date</th><th>Type</th><th>Vehicle</th><th>Stakeholder</th><th>Description</th><th>Part info</th><th>Amount</th><th></th></tr></thead><tbody>${recentExp.map(e=>{
-          const partCatColors={'New':'var(--success)','Used':'var(--warning)','From our storage':'#8b5cf6'};
-          const partInfo=(e.type==='Part'&&e.partName)?`<small style="display:block"><b>${e.partName}</b>${e.partCategory?` <span style="color:${partCatColors[e.partCategory]||'var(--muted)'};font-size:10px;font-weight:700">[${e.partCategory}]</span>`:''}${e.replacedPartCondition&&e.replacedPartCondition!=='—'?` · old: ${e.replacedPartCondition}`:''}${e.replacedPartDisposition&&e.replacedPartDisposition!=='—'?' · '+e.replacedPartDisposition:''}</small>`:'—';
-          return `<tr><td>${fmtDate(e.date)}</td><td><span class="badge ${e.type==='Part'?'badge-upcoming':e.type==='Service'?'badge-active':'badge-completed'}">${e.type||e.category||'—'}</span></td><td>${e.vehicleId?vehicleLabelShort(e.vehicleId):'—'}</td><td>${e.stakeholderId?`<strong>${stakeholderName(e.stakeholderId)}</strong>`:'—'}</td><td>${e.description||'—'}</td><td style="max-width:160px">${partInfo}</td><td class="td-mono" style="color:var(--danger);font-weight:600">${amd(e.amount)}</td><td><button class="btn btn-ghost btn-sm" onclick="openExpenseModal('${e.id}')">Edit</button></td></tr>`;
-        }).join('')}</tbody></table>`:'<div class="empty-state">No expenses in period</div>'}</div>
+        <div class="table-wrap">${recentExp.length?`<table><thead><tr><th>Date</th><th>Type</th><th>Vehicle</th><th>Stakeholder</th><th>Description</th><th>Part info</th><th>Amount</th><th></th></tr></thead><tbody>${(()=>{
+          const paid=paidExpenseIdSet();
+          return recentExp.map(e=>{
+            const partCatColors={'New':'var(--success)','Used':'var(--warning)','From our storage':'#8b5cf6'};
+            const partInfo=(e.type==='Part'&&e.partName)?`<small style="display:block"><b>${e.partName}</b>${e.partCategory?` <span style="color:${partCatColors[e.partCategory]||'var(--muted)'};font-size:10px;font-weight:700">[${e.partCategory}]</span>`:''}${e.replacedPartCondition&&e.replacedPartCondition!=='—'?` · old: ${e.replacedPartCondition}`:''}${e.replacedPartDisposition&&e.replacedPartDisposition!=='—'?' · '+e.replacedPartDisposition:''}</small>`:'—';
+            const hasStake=e.stakeholderId&&(e.type==='Part'||e.type==='Service');
+            const isPaid=hasStake&&paid.has(e.id);
+            const stakeCell=e.stakeholderId
+              ?`<strong>${stakeholderName(e.stakeholderId)}</strong>${hasStake?` <span style="font-size:10px;font-weight:700;color:${isPaid?'var(--success)':'var(--warning)'}">${isPaid?'✓ paid':'⏳ due'}</span>`:''}`
+              :'—';
+            return `<tr><td>${fmtDate(e.date)}</td><td><span class="badge ${e.type==='Part'?'badge-upcoming':e.type==='Service'?'badge-active':'badge-completed'}">${e.type||e.category||'—'}</span></td><td>${e.vehicleId?vehicleLabelShort(e.vehicleId):'—'}</td><td>${stakeCell}</td><td>${e.description||'—'}</td><td style="max-width:160px">${partInfo}</td><td class="td-mono" style="color:var(--danger);font-weight:600">${amd(e.amount)}</td><td><button class="btn btn-ghost btn-sm" onclick="openExpenseModal('${e.id}')">Edit</button></td></tr>`;
+          }).join('');
+        })()}</tbody></table>`:'<div class="empty-state">No expenses in period</div>'}</div>
       </div>
     </div>`;
 }
@@ -858,17 +911,24 @@ function openStakeholderModal(stakeholderId, fromExpense) {
             <th style="text-align:left;padding:8px;border-bottom:1px solid var(--border);color:var(--muted);font-size:10px;text-transform:uppercase">Name</th>
             <th style="text-align:left;padding:8px;border-bottom:1px solid var(--border);color:var(--muted);font-size:10px;text-transform:uppercase">Type</th>
             <th style="text-align:left;padding:8px;border-bottom:1px solid var(--border);color:var(--muted);font-size:10px;text-transform:uppercase">Phone</th>
-            <th style="text-align:right;padding:8px;border-bottom:1px solid var(--border);color:var(--muted);font-size:10px;text-transform:uppercase">Total Paid</th>
+            <th style="text-align:right;padding:8px;border-bottom:1px solid var(--border);color:var(--muted);font-size:10px;text-transform:uppercase">Billed</th>
+            <th style="text-align:right;padding:8px;border-bottom:1px solid var(--border);color:var(--muted);font-size:10px;text-transform:uppercase">Paid</th>
+            <th style="text-align:right;padding:8px;border-bottom:1px solid var(--border);color:var(--muted);font-size:10px;text-transform:uppercase">Outstanding</th>
             <th></th>
           </tr></thead>
           <tbody>${state.stakeholders.map(st=>{
-            const total=state.expenses.filter(e=>e.stakeholderId===st.id).reduce((s,e)=>s+(Number(e.amount)||0),0);
+            const stats=stakeholderStats(st.id);
             return `<tr>
               <td style="padding:10px 8px;font-weight:600">${st.name}</td>
               <td style="padding:10px 8px;color:var(--muted)">${st.type||'—'}</td>
               <td style="padding:10px 8px">${st.phone||'—'}</td>
-              <td style="padding:10px 8px;text-align:right;font-weight:600;color:var(--danger)">${amd(total)}</td>
-              <td style="padding:10px 8px"><button class="btn btn-ghost btn-sm" onclick="openStakeholderModal('${st.id}')">Edit</button></td>
+              <td style="padding:10px 8px;text-align:right">${amd(stats.billed)}</td>
+              <td style="padding:10px 8px;text-align:right;color:var(--success)">${amd(stats.paidAmt)}</td>
+              <td style="padding:10px 8px;text-align:right;font-weight:${stats.outstanding>0?'700':'400'};color:${stats.outstanding>0?'var(--danger)':'var(--muted)'}">${amd(stats.outstanding)}</td>
+              <td style="padding:10px 8px;white-space:nowrap">
+                <button class="btn btn-ghost btn-sm" onclick="openStakeholderModal('${st.id}')">Edit</button>
+                ${stats.outstanding>0?`<button class="btn btn-primary btn-sm" onclick="openStakeholderPaymentModal('${st.id}')">Pay</button>`:''}
+              </td>
             </tr>`;
           }).join('')}</tbody>
         </table>`:`<div class="empty-state"><div class="empty-state-title">No stakeholders yet</div></div>`}
@@ -931,6 +991,93 @@ async function saveStakeholder(id, fromExpense) {
   }catch(e){toast('Error: '+e.message,'error');}
   if(fromExpense) openExpenseModal();
   else renderPage();
+}
+
+// ── STAKEHOLDER PAYMENT ALLOCATION ────────────────────────────────────────
+function openStakeholderPaymentModal(stakeholderId) {
+  const s=state.stakeholders.find(x=>x.id===stakeholderId); if(!s)return;
+  const paid=paidExpenseIdSet();
+  const outstanding=state.expenses.filter(e=>e.stakeholderId===stakeholderId&&(e.type==='Part'||e.type==='Service')&&!paid.has(e.id)).sort((a,b)=>a.date>b.date?1:-1);
+  const stats=stakeholderStats(stakeholderId);
+
+  openModal(`<div class="modal-overlay"><div class="modal modal-wide">
+    <div class="modal-header"><div class="modal-title">Pay ${s.name}</div>${CLOSE_BTN}</div>
+    <div class="modal-body">
+      <div class="info-list" style="margin-bottom:16px">
+        <div class="info-row"><span class="info-key">Total billed</span><span class="info-val">${amd(stats.billed)}</span></div>
+        <div class="info-row"><span class="info-key">Already paid</span><span class="info-val" style="color:var(--success)">${amd(stats.paidAmt)}</span></div>
+        <div class="info-row"><span class="info-key">Outstanding</span><span class="info-val" style="color:var(--danger);font-weight:700">${amd(stats.outstanding)}</span></div>
+      </div>
+
+      ${outstanding.length ? `
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:8px">Select expenses to mark as paid</div>
+        <div style="border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:16px">
+          <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--surface2);font-size:12px;font-weight:600;border-bottom:1px solid var(--border)">
+            <input type="checkbox" id="stk-pay-all" onchange="toggleAllStkExp(this.checked)">
+            <span>Select all</span>
+            <span style="margin-left:auto;color:var(--primary)" id="stk-pay-total">0 ֏ selected</span>
+          </div>
+          ${outstanding.map(e=>`
+          <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;font-size:13px">
+            <input type="checkbox" class="stk-exp-cb" data-id="${e.id}" data-amount="${e.amount||0}" onchange="updateStkPayTotal()">
+            <div style="flex:1">
+              <div style="font-weight:600">${e.description||e.partName||e.type}</div>
+              <div style="font-size:11px;color:var(--muted)">${e.type}${e.partName?' · '+e.partName:''}${e.vehicleId?' · '+vehicleLabelShort(e.vehicleId):''} · ${fmtDate(e.date)}</div>
+            </div>
+            <div style="font-weight:700;color:var(--danger);white-space:nowrap">${amd(e.amount)}</div>
+          </label>`).join('')}
+        </div>
+      ` : `<div style="color:var(--success);font-weight:600;margin-bottom:16px;padding:12px;border:1px solid var(--success);border-radius:var(--radius)">✓ All expenses already paid</div>`}
+
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">Payment Date</label><input type="date" class="form-control" id="stk-pay-date" value="${todayStr()}"></div>
+        <div class="form-group"><label class="form-label">Method</label><select class="form-control" id="stk-pay-method"><option>Cash</option><option>Card</option><option>Transfer</option></select></div>
+        <div class="form-group form-full"><label class="form-label">Notes</label><input type="text" class="form-control" id="stk-pay-notes" placeholder="Optional"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="stk-pay-btn" onclick="saveStakeholderPayment('${stakeholderId}')" ${outstanding.length?'':'disabled'}>Record Payment</button>
+    </div>
+  </div></div>`);
+}
+
+function toggleAllStkExp(checked) {
+  document.querySelectorAll('.stk-exp-cb').forEach(cb=>cb.checked=checked);
+  updateStkPayTotal();
+}
+
+function updateStkPayTotal() {
+  const cbs=[...document.querySelectorAll('.stk-exp-cb:checked')];
+  const total=cbs.reduce((s,cb)=>s+(Number(cb.dataset.amount)||0),0);
+  const el=document.getElementById('stk-pay-total');
+  if(el) el.textContent=amd(total)+' selected';
+  const allCb=document.querySelectorAll('.stk-exp-cb');
+  const allChk=document.getElementById('stk-pay-all');
+  if(allChk) allChk.checked=allCb.length>0&&allCb.length===cbs.length;
+  const btn=document.getElementById('stk-pay-btn');
+  if(btn) btn.disabled=cbs.length===0;
+}
+
+async function saveStakeholderPayment(stakeholderId) {
+  const cbs=[...document.querySelectorAll('.stk-exp-cb:checked')];
+  if(!cbs.length){toast('Select at least one expense','error');return;}
+  const expenseIds=cbs.map(cb=>cb.dataset.id).join(',');
+  const amount=cbs.reduce((s,cb)=>s+(Number(cb.dataset.amount)||0),0);
+  const payment={
+    id:uid(), stakeholderId,
+    date:document.getElementById('stk-pay-date').value,
+    amount, method:document.getElementById('stk-pay-method').value,
+    expenseIds,
+    notes:document.getElementById('stk-pay-notes').value.trim(),
+  };
+  closeModal();
+  try{
+    if(!GAS_URL.includes('YOUR_DEPLOYMENT_ID')){const r=await callApi({action:'saveStakeholderPayment',data:JSON.stringify(payment)});if(r.error)throw new Error(r.error);payment.id=r.id||payment.id;}
+    state.stakeholderPayments.push(payment);
+    toast(`Payment of ${amd(amount)} recorded for ${cbs.length} expense${cbs.length!==1?'s':''}`, 'success');
+  }catch(e){toast('Error: '+e.message,'error');}
+  renderPage();
 }
 
 async function deleteStakeholder(id) {
