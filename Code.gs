@@ -12,6 +12,8 @@ var SHEETS = {
   // Expenses is the single ledger for both expense and stakeholder records.
   // Existing expense rows without recordType are still treated as expenses.
   expenses:     { name: 'Expenses',     cols: ['id','recordType','vehicleId','type','amount','date','stakeholderId','partName','partCategory','replacedPartCondition','replacedPartDisposition','description','notes','name','stakeholderType','phone','stakeholderNotes'] },
+  // Post-factum income ledger: each row is income already received. No bookings.
+  income:       { name: 'Income',       cols: ['id','date','customerId','customerName','vehicleId','fromDate','toDate','days','rate','amount','method','type','notes','createdAt'] },
 };
 
 // ── Entry point ────────────────────────────────────────────────────────────
@@ -32,8 +34,11 @@ function doGet(e) {
     else if (action === 'deleteExpense')      result = deleteRow('expenses',   e.parameter.id);
     else if (action === 'saveStakeholder')     result = saveStakeholderRow(JSON.parse(e.parameter.data));
     else if (action === 'deleteStakeholder')   result = deleteStakeholderRow(e.parameter.id);
+    else if (action === 'saveIncome')                result = saveIncomeRow(JSON.parse(e.parameter.data));
+    else if (action === 'deleteIncome')              result = deleteRow('income', e.parameter.id);
     else if (action === 'migrateVehicleIds')         result = migrateVehicleIdsToPlates();
     else if (action === 'backfillBookingNames')      result = backfillBookingNames();
+    else if (action === 'wipeBookingsData')          result = wipeBookingsData();
     else result = { error: 'Unknown action: ' + action };
   } catch(err) {
     result = { error: err.message };
@@ -84,7 +89,29 @@ function getAll() {
     payments:     payments,
     expenses:     expenses,
     stakeholders: stakeholders,
+    income:       readSheet('income'),
   };
+}
+
+// Save an income entry; snapshot the customer's name so the sheet is readable.
+function saveIncomeRow(obj) {
+  if (obj.customerId) {
+    var nm = customerNameMap()[String(obj.customerId)];
+    if (nm) obj.customerName = nm;
+  }
+  return saveRow('income', obj);
+}
+
+// One-time wipe of the old booking/payment data (user opted to delete it).
+// Backs the Bookings sheet up first, then clears every data row (keeps header).
+function wipeBookingsData() {
+  var sheet = SS.getSheetByName('Bookings');
+  if (!sheet) return { ok: true, note: 'No Bookings sheet' };
+  var stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd_HHmmss');
+  sheet.copyTo(SS).setName('Bookings_BAK_' + stamp);
+  var rows = sheet.getLastRow() - 1;
+  if (rows > 0) sheet.deleteRows(2, rows);
+  return { ok: true, rowsCleared: rows, backup: 'Bookings_BAK_' + stamp };
 }
 
 // Field-based detection prevents a bad/misaligned recordType cell from hiding
