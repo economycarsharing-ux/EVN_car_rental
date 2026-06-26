@@ -46,10 +46,10 @@ function doGet(e) {
 function getAll() {
   var bookingLedger = readSheet('bookings');
   var bookings = bookingLedger.filter(function(row) {
-    return String(row.recordType || '').toLowerCase() !== 'payment';
+    return !isPaymentLedgerRow(row);
   });
   var payments = bookingLedger.filter(function(row) {
-    return String(row.recordType || '').toLowerCase() === 'payment';
+    return isPaymentLedgerRow(row);
   }).map(paymentFromLedgerRow);
 
   // Transition support for deployments that have not run the one-time
@@ -84,6 +84,15 @@ function getAll() {
     expenses:     expenses,
     stakeholders: stakeholders,
   };
+}
+
+// Field-based detection prevents a bad/misaligned recordType cell from hiding
+// a real booking. Booking rows have trip/customer fields; payment rows point
+// back to a booking through bookingId.
+function isPaymentLedgerRow(row) {
+  var hasBookingFields = !!(row.customerId || row.vehicleId || row.startDate || row.endDate || row.totalAmount);
+  if (hasBookingFields) return false;
+  return String(row.recordType || '').toLowerCase() === 'payment' || !!row.bookingId;
 }
 
 function paymentFromLedgerRow(row) {
@@ -336,8 +345,13 @@ function migrateBookingLedger() {
   var recordTypeCol = headers.indexOf('recordType');
   if (recordTypeCol >= 0) {
     for (var i = 1; i < data.length; i++) {
-      if (!data[i][recordTypeCol]) {
-        bookingSheet.getRange(i + 1, recordTypeCol + 1).setValue('booking');
+      var row = {};
+      headers.forEach(function(header, column) {
+        row[header] = fmtCell(data[i][column]);
+      });
+      var correctType = isPaymentLedgerRow(row) ? 'payment' : 'booking';
+      if (String(data[i][recordTypeCol]).toLowerCase() !== correctType) {
+        bookingSheet.getRange(i + 1, recordTypeCol + 1).setValue(correctType);
       }
     }
   }
