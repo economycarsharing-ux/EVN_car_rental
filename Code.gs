@@ -8,7 +8,7 @@ var SHEETS = {
   customers:    { name: 'Customers',    cols: ['id','name','phone','email','idNumber','licenseNumber','address','notes','createdAt'] },
   // Bookings is the single ledger for both booking and customer-payment rows.
   // Existing booking rows without recordType are still treated as bookings.
-  bookings:     { name: 'Bookings',     cols: ['id','recordType','customerId','vehicleId','startDate','endDate','returnDate','dailyRate','totalAmount','deposit','cancelled','notes','createdAt','startTime','endTime','returnTime','bookingId','amount','date','method','type'] },
+  bookings:     { name: 'Bookings',     cols: ['id','recordType','customerId','customerName','vehicleId','startDate','endDate','returnDate','dailyRate','totalAmount','deposit','cancelled','notes','createdAt','startTime','endTime','returnTime','bookingId','amount','date','method','type'] },
   // Expenses is the single ledger for both expense and stakeholder records.
   // Existing expense rows without recordType are still treated as expenses.
   expenses:     { name: 'Expenses',     cols: ['id','recordType','vehicleId','type','amount','date','stakeholderId','partName','partCategory','replacedPartCondition','replacedPartDisposition','description','notes','name','stakeholderType','phone','stakeholderNotes'] },
@@ -33,6 +33,7 @@ function doGet(e) {
     else if (action === 'saveStakeholder')     result = saveStakeholderRow(JSON.parse(e.parameter.data));
     else if (action === 'deleteStakeholder')   result = deleteStakeholderRow(e.parameter.id);
     else if (action === 'migrateVehicleIds')         result = migrateVehicleIdsToPlates();
+    else if (action === 'backfillBookingNames')      result = backfillBookingNames();
     else result = { error: 'Unknown action: ' + action };
   } catch(err) {
     result = { error: err.message };
@@ -112,7 +113,61 @@ function paymentFromLedgerRow(row) {
 
 function saveBookingRow(obj) {
   obj.recordType = 'booking';
+  // Snapshot the customer's name so the Bookings sheet is readable without
+  // having to cross-reference customerId against the Customers sheet.
+  if (obj.customerId) {
+    var nm = customerNameMap()[String(obj.customerId)];
+    if (nm) obj.customerName = nm;
+  }
   return saveRow('bookings', obj);
+}
+
+// Map of customerId -> customer name, read from the Customers sheet.
+function customerNameMap() {
+  var map = {};
+  readSheet('customers').forEach(function(c) {
+    if (c.id) map[String(c.id)] = c.name || '';
+  });
+  return map;
+}
+
+// One-time/refresh helper: ensure a customerName column exists (placed right
+// after customerId) and fill it in for every existing booking row.
+// Run via the web app URL:  <GAS_URL>?action=backfillBookingNames
+function backfillBookingNames() {
+  var sheet   = getSheet('bookings');
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(String);
+  var idCol   = headers.indexOf('customerId');         // 0-based
+
+  if (headers.indexOf('customerName') === -1) {
+    if (idCol >= 0) {
+      sheet.insertColumnAfter(idCol + 1);              // 1-based position
+      sheet.getRange(1, idCol + 2).setValue('customerName')
+           .setFontWeight('bold').setBackground('#1e3a5f').setFontColor('#ffffff');
+    } else {
+      var last = sheet.getLastColumn() + 1;
+      sheet.getRange(1, last).setValue('customerName')
+           .setFontWeight('bold').setBackground('#1e3a5f').setFontColor('#ffffff');
+    }
+  }
+
+  var data    = sheet.getDataRange().getValues();
+  var hdr     = data[0].map(String);
+  var cIdCol  = hdr.indexOf('customerId');
+  var nameCol = hdr.indexOf('customerName');
+  if (cIdCol < 0 || nameCol < 0) return { error: 'customerId/customerName column missing' };
+
+  var names  = customerNameMap();
+  var filled = 0;
+  for (var i = 1; i < data.length; i++) {
+    var cid  = String(data[i][cIdCol]);
+    var want = (cid && names[cid]) ? names[cid] : '';
+    if (want && String(data[i][nameCol]) !== want) {
+      sheet.getRange(i + 1, nameCol + 1).setValue(want);
+      filled++;
+    }
+  }
+  return { ok: true, namesFilled: filled };
 }
 
 function savePaymentRow(obj) {
