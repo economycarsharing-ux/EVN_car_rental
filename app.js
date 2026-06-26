@@ -352,7 +352,7 @@ function renderFinances(body, actions) {
       <option value="year" ${state.finPeriod==='year'?'selected':''}>This Year</option>
       <option value="all" ${state.finPeriod==='all'?'selected':''}>All Time</option>
     </select>
-    <button class="btn btn-secondary btn-sm" onclick="openStakeholderModal()">Mechanics</button>
+    <button class="btn btn-secondary btn-sm" onclick="openStakeholderModal()">Stakeholders</button>
     <button class="btn btn-primary btn-sm" onclick="openExpenseModal()">+ Expense</button>`;
 
   const pays=state.payments.filter(p=>periodFilter(p.date));
@@ -390,7 +390,7 @@ function renderFinances(body, actions) {
     <div class="dash-grid">
       <div class="card"><div class="card-header"><div class="card-title">Income by Method</div></div><div class="card-body">${barList(byMethod,income,'var(--success)')}</div></div>
       <div class="card"><div class="card-header"><div class="card-title">Expenses by Type</div></div><div class="card-body">${barList(byType,expTotal,'var(--danger)')}</div></div>
-      ${Object.keys(byStakeholder).length?`<div class="card"><div class="card-header"><div class="card-title">Paid to Mechanics & Suppliers</div><button class="btn btn-ghost btn-sm" onclick="openStakeholderModal()">Manage</button></div><div class="card-body">${barList(byStakeholder,expTotal,'#8b5cf6')}</div></div>`:''}
+      ${Object.keys(byStakeholder).length?`<div class="card"><div class="card-header"><div class="card-title">Paid to Stakeholders</div><button class="btn btn-ghost btn-sm" onclick="openStakeholderModal()">Manage</button></div><div class="card-body">${barList(byStakeholder,expTotal,'#8b5cf6')}</div></div>`:''}
       ${Object.keys(byVehicle).length?`<div class="card"><div class="card-header"><div class="card-title">Expenses by Vehicle</div></div><div class="card-body">${barList(byVehicle,expTotal,'var(--warning)')}</div></div>`:''}
       <div class="card">
         <div class="card-header"><div class="card-title">Recent Payments</div></div>
@@ -735,7 +735,7 @@ function openExpenseModal(expenseId, prefillVehicleId) {
         <!-- Stakeholder (mechanic / supplier) -->
         <div id="ex-stake-section" class="form-full" style="display:${showStake?'block':'none'}">
           <div style="background:var(--primary-l);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:2px">
-            <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--primary);margin-bottom:10px">Mechanic / Supplier</div>
+            <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--primary);margin-bottom:10px">Paid to (Stakeholder)</div>
             <div style="display:flex;gap:8px;align-items:flex-end">
               <div class="form-group" style="flex:1;margin:0">
                 <select class="form-control" id="ex-stakeholder">
@@ -804,7 +804,7 @@ async function deleteExpense(id) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// MODAL: STAKEHOLDER (mechanic / supplier)
+// MODAL: STAKEHOLDER
 // ──────────────────────────────────────────────────────────────────────────
 function openStakeholderModal(stakeholderId, fromExpense) {
   const s=stakeholderId?state.stakeholders.find(x=>x.id===stakeholderId):null;
@@ -812,7 +812,7 @@ function openStakeholderModal(stakeholderId, fromExpense) {
   // If no specific ID and not from expense → show the management list
   if(!stakeholderId && !fromExpense) {
     openModal(`<div class="modal-overlay"><div class="modal modal-wide">
-      <div class="modal-header"><div class="modal-title">Mechanics & Suppliers</div>${CLOSE_BTN}</div>
+      <div class="modal-header"><div class="modal-title">Stakeholders</div>${CLOSE_BTN}</div>
       <div class="modal-body">
         ${state.stakeholders.length?`<table style="width:100%;border-collapse:collapse;font-size:13px">
           <thead><tr>
@@ -832,7 +832,7 @@ function openStakeholderModal(stakeholderId, fromExpense) {
               <td style="padding:10px 8px"><button class="btn btn-ghost btn-sm" onclick="openStakeholderModal('${st.id}')">Edit</button></td>
             </tr>`;
           }).join('')}</tbody>
-        </table>`:`<div class="empty-state"><div class="empty-state-title">No mechanics or suppliers yet</div></div>`}
+        </table>`:`<div class="empty-state"><div class="empty-state-title">No stakeholders yet</div></div>`}
       </div>
       <div class="modal-footer">
         <button class="btn btn-primary" onclick="openStakeholderModal(null,true)">+ Add New</button>
@@ -843,17 +843,17 @@ function openStakeholderModal(stakeholderId, fromExpense) {
 
   // Create / edit form
   openModal(`<div class="modal-overlay"><div class="modal">
-    <div class="modal-header"><div class="modal-title">${s?'Edit':'New Mechanic / Supplier'}</div>${CLOSE_BTN}</div>
+    <div class="modal-header"><div class="modal-title">${s?'Edit Stakeholder':'New Stakeholder'}</div>${CLOSE_BTN}</div>
     <div class="modal-body">
       <div class="form-grid">
         <div class="form-group form-full">
           <label class="form-label">Name</label>
-          <input type="text" class="form-control" id="sk-name" value="${s?.name||''}" placeholder="Armen, Garage Nord…">
+          <input type="text" class="form-control" id="sk-name" value="${s?.name||''}" placeholder="Armen, Garage Nord, State Tax Service…">
         </div>
         <div class="form-group">
           <label class="form-label">Type</label>
           <select class="form-control" id="sk-type">
-            ${['Mechanic','Parts Shop','Both','Other'].map(t=>`<option ${s?.type===t?'selected':''}>${t}</option>`).join('')}
+            ${['Mechanic','Parts Shop','Insurance Company','State / Government','Bank','Other'].map(t=>`<option ${s?.type===t?'selected':''}>${t}</option>`).join('')}
           </select>
         </div>
         <div class="form-group">
@@ -896,8 +896,8 @@ async function saveStakeholder(id, fromExpense) {
 
 async function deleteStakeholder(id) {
   const usedInExpenses=state.expenses.some(e=>e.stakeholderId===id);
-  if(usedInExpenses&&!confirm('This mechanic/supplier has expenses linked. Delete anyway?'))return;
-  else if(!usedInExpenses&&!confirm('Delete this mechanic/supplier?'))return;
+  if(usedInExpenses&&!confirm('This stakeholder has expenses linked. Delete anyway?'))return;
+  else if(!usedInExpenses&&!confirm('Delete this stakeholder?'))return;
   closeModal();
   try{
     if(!GAS_URL.includes('YOUR_DEPLOYMENT_ID'))await callApi({action:'deleteStakeholder',id});
