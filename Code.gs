@@ -8,9 +8,9 @@ var SHEETS = {
   customers:    { name: 'Customers',    cols: ['id','name','phone','email','idNumber','licenseNumber','address','notes','createdAt'] },
   bookings:     { name: 'Bookings',     cols: ['id','customerId','vehicleId','startDate','endDate','returnDate','dailyRate','totalAmount','deposit','cancelled','notes','createdAt','startTime','endTime','returnTime'] },
   payments:     { name: 'Payments',     cols: ['id','bookingId','amount','date','method','type','notes'] },
-  expenses:     { name: 'Expenses',     cols: ['id','vehicleId','type','amount','date','stakeholderId','partName','partCategory','replacedPartCondition','replacedPartDisposition','description','notes'] },
-  stakeholders:         { name: 'Stakeholders',         cols: ['id','name','type','phone','notes'] },
-  stakeholder_payments: { name: 'StakeholderPayments', cols: ['id','stakeholderId','date','amount','method','expenseIds','allocations','notes'] },
+  // Expenses is the single ledger for both expense and stakeholder records.
+  // Existing expense rows without recordType are still treated as expenses.
+  expenses:     { name: 'Expenses',     cols: ['id','recordType','vehicleId','type','amount','date','stakeholderId','partName','partCategory','replacedPartCondition','replacedPartDisposition','description','notes','name','stakeholderType','phone','stakeholderNotes'] },
 };
 
 // ── Entry point ────────────────────────────────────────────────────────────
@@ -29,10 +29,8 @@ function doGet(e) {
     else if (action === 'deletePayment')      result = deleteRow('payments',   e.parameter.id);
     else if (action === 'saveExpense')        result = saveRow('expenses',     JSON.parse(e.parameter.data));
     else if (action === 'deleteExpense')      result = deleteRow('expenses',   e.parameter.id);
-    else if (action === 'saveStakeholder')          result = saveRow('stakeholders',         JSON.parse(e.parameter.data));
-    else if (action === 'deleteStakeholder')         result = deleteRow('stakeholders',        e.parameter.id);
-    else if (action === 'saveStakeholderPayment')    result = saveRow('stakeholder_payments',  JSON.parse(e.parameter.data));
-    else if (action === 'deleteStakeholderPayment')  result = deleteRow('stakeholder_payments',e.parameter.id);
+    else if (action === 'saveStakeholder')     result = saveStakeholderRow(JSON.parse(e.parameter.data));
+    else if (action === 'deleteStakeholder')   result = deleteStakeholderRow(e.parameter.id);
     else if (action === 'migrateVehicleIds')         result = migrateVehicleIdsToPlates();
     else result = { error: 'Unknown action: ' + action };
   } catch(err) {
@@ -45,15 +43,58 @@ function doGet(e) {
 
 // ── Read all data ──────────────────────────────────────────────────────────
 function getAll() {
+  var ledger = readSheet('expenses');
+  var expenses = ledger.filter(function(row) {
+    return String(row.recordType || '').toLowerCase() !== 'stakeholder';
+  });
+  var stakeholders = ledger.filter(function(row) {
+    return String(row.recordType || '').toLowerCase() === 'stakeholder';
+  }).map(stakeholderFromLedgerRow);
+
+  // Transition support: keep old Stakeholders data visible until the one-time
+  // migrateFinanceLedger action has been run on the deployed spreadsheet.
+  readExistingSheet('Stakeholders').forEach(function(row) {
+    if (!stakeholders.some(function(s) { return String(s.id) === String(row.id); })) {
+      stakeholders.push(row);
+    }
+  });
+
   return {
     vehicles:     readSheet('vehicles'),
     customers:    readSheet('customers'),
     bookings:     readSheet('bookings'),
     payments:     readSheet('payments'),
-    expenses:             readSheet('expenses'),
-    stakeholders:         readSheet('stakeholders'),
-    stakeholderPayments:  readSheet('stakeholder_payments'),
+    expenses:     expenses,
+    stakeholders: stakeholders,
   };
+}
+
+function stakeholderFromLedgerRow(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    type: row.stakeholderType,
+    phone: row.phone,
+    notes: row.stakeholderNotes
+  };
+}
+
+function saveStakeholderRow(obj) {
+  return saveRow('expenses', {
+    id: obj.id,
+    recordType: 'stakeholder',
+    name: obj.name,
+    stakeholderType: obj.type,
+    phone: obj.phone,
+    stakeholderNotes: obj.notes
+  });
+}
+
+function deleteStakeholderRow(id) {
+  var result = deleteRow('expenses', id);
+  var legacy = SS.getSheetByName('Stakeholders');
+  if (legacy) deleteRowFromSheet(legacy, id);
+  return result.ok ? result : { ok: true };
 }
 
 // ── Value formatter ────────────────────────────────────────────────────────
@@ -92,6 +133,20 @@ function readSheet(key) {
     headers.forEach(function(h, i) { obj[h] = fmtCell(row[i]); });
     return obj;
   }).filter(function(r) { return r.id; });
+}
+
+// Reads a legacy tab only when it exists; unlike readSheet, it never creates it.
+function readExistingSheet(name) {
+  var sheet = SS.getSheetByName(name);
+  if (!sheet) return [];
+  var data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return [];
+  var headers = data[0].map(String);
+  return data.slice(1).map(function(row) {
+    var obj = {};
+    headers.forEach(function(h, i) { obj[h] = fmtCell(row[i]); });
+    return obj;
+  }).filter(function(row) { return row.id; });
 }
 
 // Writes by actual sheet header names — auto-adds missing columns as needed.
@@ -134,6 +189,10 @@ function saveRow(key, obj) {
 
 function deleteRow(key, id) {
   var sheet = getSheet(key);
+  return deleteRowFromSheet(sheet, id);
+}
+
+function deleteRowFromSheet(sheet, id) {
   var data  = sheet.getDataRange().getValues();
   for (var i = data.length - 1; i >= 1; i--) {
     if (String(data[i][0]) === String(id)) {
@@ -165,6 +224,64 @@ function setupSheets() {
   });
   var msg = added.length ? 'Added: ' + added.join(', ') : 'All sheets already up to date.';
   SpreadsheetApp.getUi().alert(msg);
+}
+
+// One-time migration to the unified Expenses ledger.
+// Run once from the Apps Script editor after deploying this version.
+// Stakeholders are copied into Expenses, old expense rows are marked as
+// expenses, and the now-redundant Stakeholders/StakeholderPayments tabs are
+// removed. Stakeholder payment rows are intentionally not copied: recording
+// an expense means it has already been paid.
+function migrateFinanceLedger() {
+  var expenseSheet = getSheet('expenses');
+  var ledgerHeaders = expenseSheet.getRange(1, 1, 1, expenseSheet.getLastColumn()).getValues()[0].map(String);
+  SHEETS.expenses.cols.forEach(function(col) {
+    if (ledgerHeaders.indexOf(col) === -1) {
+      var newCol = expenseSheet.getLastColumn() + 1;
+      expenseSheet.getRange(1, newCol).setValue(col).setFontWeight('bold').setBackground('#1e3a5f').setFontColor('#ffffff');
+      ledgerHeaders.push(col);
+    }
+  });
+
+  var stakeholders = readExistingSheet('Stakeholders');
+  var existing = readSheet('expenses');
+  var existingIds = {};
+  existing.forEach(function(row) { existingIds[String(row.id)] = true; });
+
+  var imported = 0;
+  stakeholders.forEach(function(stakeholder) {
+    if (existingIds[String(stakeholder.id)]) return;
+    saveStakeholderRow(stakeholder);
+    existingIds[String(stakeholder.id)] = true;
+    imported++;
+  });
+
+  var data = expenseSheet.getDataRange().getValues();
+  var headers = data[0].map(String);
+  var recordTypeCol = headers.indexOf('recordType');
+  if (recordTypeCol >= 0) {
+    for (var i = 1; i < data.length; i++) {
+      if (!data[i][recordTypeCol]) {
+        expenseSheet.getRange(i + 1, recordTypeCol + 1).setValue('expense');
+      }
+    }
+  }
+
+  var removed = [];
+  ['Stakeholders', 'StakeholderPayments'].forEach(function(name) {
+    var sheet = SS.getSheetByName(name);
+    if (sheet) {
+      SS.deleteSheet(sheet);
+      removed.push(name);
+    }
+  });
+
+  return {
+    ok: true,
+    stakeholdersImported: imported,
+    sheetsRemoved: removed,
+    ledgerSheet: 'Expenses'
+  };
 }
 
 // ── One-time migration: switch vehicle IDs to plate numbers ─────────────────

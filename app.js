@@ -3,7 +3,7 @@
 // ── State ──────────────────────────────────────────────────────────────────
 const state = {
   page: 'dashboard',
-  vehicles: [], customers: [], bookings: [], payments: [], expenses: [], stakeholders: [], stakeholderPayments: [],
+  vehicles: [], customers: [], bookings: [], payments: [], expenses: [], stakeholders: [],
   loading: false,
   bookingFilter: 'all', bookingSearch: '',
   vehicleFilter: 'all',
@@ -31,8 +31,7 @@ async function fetchAll() {
     state.bookings    = d.bookings    || [];
     state.payments    = d.payments    || [];
     state.expenses    = d.expenses    || [];
-    state.stakeholders        = d.stakeholders        || [];
-    state.stakeholderPayments = d.stakeholderPayments || [];
+    state.stakeholders = d.stakeholders || [];
   } catch (e) { toast('Failed to load: ' + e.message, 'error'); }
   state.loading = false; renderPage();
 }
@@ -357,22 +356,10 @@ function renderCustomers(body, actions) {
 // ──────────────────────────────────────────────────────────────────────────
 function stakeholderName(id) { const s=state.stakeholders.find(x=>x.id===id); return s?s.name:'—'; }
 
-function paidExpenseIdSet() {
-  const s=new Set();
-  state.stakeholderPayments.forEach(p=>{
-    if(p.expenseIds) p.expenseIds.split(',').forEach(id=>{const t=id.trim();if(t)s.add(t);});
-  });
-  return s;
-}
-
 function stakeholderStats(stakeholderId) {
-  const exps=state.expenses.filter(e=>e.stakeholderId===stakeholderId&&(e.type==='Part'||e.type==='Service'));
-  const billed=exps.reduce((s,e)=>s+(Number(e.amount)||0),0);
-  // Paid = actual cash handed to this stakeholder across all recorded payments
-  const paidAmt=state.stakeholderPayments
-    .filter(p=>p.stakeholderId===stakeholderId)
-    .reduce((s,p)=>s+(Number(p.amount)||0),0);
-  return {billed, paidAmt, outstanding:billed-paidAmt};
+  const exps=state.expenses.filter(e=>e.stakeholderId===stakeholderId);
+  const total=exps.reduce((sum,e)=>sum+(Number(e.amount)||0),0);
+  return {count:exps.length,total};
 }
 
 function renderFinances(body, actions) {
@@ -421,35 +408,7 @@ function renderFinances(body, actions) {
     <div class="dash-grid">
       <div class="card"><div class="card-header"><div class="card-title">Income by Method</div></div><div class="card-body">${barList(byMethod,income,'var(--success)')}</div></div>
       <div class="card"><div class="card-header"><div class="card-title">Expenses by Type</div></div><div class="card-body">${barList(byType,expTotal,'var(--danger)')}</div></div>
-      ${Object.keys(byStakeholder).length?(()=>{
-        const paid=paidExpenseIdSet();
-        const byStakePaid={},byStakeOut={};
-        exps.forEach(e=>{
-          if(!e.stakeholderId||!(e.type==='Part'||e.type==='Service')) return;
-          const k=stakeholderName(e.stakeholderId);
-          const amt=Number(e.amount)||0;
-          if(paid.has(e.id)){byStakePaid[k]=(byStakePaid[k]||0)+amt;}
-          else{byStakeOut[k]=(byStakeOut[k]||0)+amt;}
-        });
-        const outTotal=Object.values(byStakeOut).reduce((s,v)=>s+v,0);
-        return `<div class="card"><div class="card-header"><div class="card-title">Stakeholders — Paid vs Outstanding</div><button class="btn btn-primary btn-sm" onclick="openStakeholderModal()">Manage &amp; Pay</button></div>
-          <div class="card-body">
-            ${Object.keys({...byStakePaid,...byStakeOut}).sort().map(k=>{
-              const p=byStakePaid[k]||0, o=byStakeOut[k]||0, t=p+o;
-              const pPct=t>0?Math.round(p/t*100):0;
-              return `<div style="margin-bottom:10px">
-                <div style="display:flex;justify-content:space-between;margin-bottom:3px;font-size:12px">
-                  <span style="font-weight:600">${k}</span>
-                  <span style="color:var(--muted)">${o>0?`<span style="color:var(--danger)">⏳ ${amd(o)} due</span>`:'<span style="color:var(--success)">✓ settled</span>'}</span>
-                </div>
-                <div style="height:6px;border-radius:3px;background:var(--surface2);overflow:hidden;display:flex">
-                  <div style="width:${pPct}%;background:var(--success)"></div>
-                  <div style="width:${100-pPct}%;background:var(--danger);opacity:0.4"></div>
-                </div>
-              </div>`;
-            }).join('')}
-          </div></div>`;
-      })():''}
+      ${Object.keys(byStakeholder).length?`<div class="card"><div class="card-header"><div class="card-title">Expenses by Stakeholder</div><button class="btn btn-secondary btn-sm" onclick="openStakeholderModal()">Manage</button></div><div class="card-body">${barList(byStakeholder,expTotal,'var(--primary)')}</div></div>`:''}
       ${Object.keys(byVehicle).length?`<div class="card"><div class="card-header"><div class="card-title">Expenses by Vehicle</div></div><div class="card-body">${barList(byVehicle,expTotal,'var(--warning)')}</div></div>`:''}
       <div class="card">
         <div class="card-header"><div class="card-title">Recent Payments</div></div>
@@ -457,19 +416,12 @@ function renderFinances(body, actions) {
       </div>
       <div class="card dash-full">
         <div class="card-header"><div class="card-title">Expenses</div></div>
-        <div class="table-wrap">${recentExp.length?`<table><thead><tr><th>Date</th><th>Type</th><th>Vehicle</th><th>Stakeholder</th><th>Description</th><th>Part info</th><th>Amount</th><th></th></tr></thead><tbody>${(()=>{
-          const paid=paidExpenseIdSet();
-          return recentExp.map(e=>{
+        <div class="table-wrap">${recentExp.length?`<table><thead><tr><th>Date</th><th>Type</th><th>Vehicle</th><th>Stakeholder</th><th>Description</th><th>Part info</th><th>Amount</th><th></th></tr></thead><tbody>${recentExp.map(e=>{
             const partCatColors={'New':'var(--success)','Used':'var(--warning)','From our storage':'#8b5cf6'};
             const partInfo=(e.type==='Part'&&e.partName)?`<small style="display:block"><b>${e.partName}</b>${e.partCategory?` <span style="color:${partCatColors[e.partCategory]||'var(--muted)'};font-size:10px;font-weight:700">[${e.partCategory}]</span>`:''}${e.replacedPartCondition&&e.replacedPartCondition!=='—'?` · old: ${e.replacedPartCondition}`:''}${e.replacedPartDisposition&&e.replacedPartDisposition!=='—'?' · '+e.replacedPartDisposition:''}</small>`:'—';
-            const hasStake=e.stakeholderId&&(e.type==='Part'||e.type==='Service');
-            const isPaid=hasStake&&paid.has(e.id);
-            const stakeCell=e.stakeholderId
-              ?`<strong>${stakeholderName(e.stakeholderId)}</strong>${hasStake?` <span style="font-size:10px;font-weight:700;color:${isPaid?'var(--success)':'var(--warning)'}">${isPaid?'✓ paid':'⏳ due'}</span>`:''}`
-              :'—';
+            const stakeCell=e.stakeholderId?`<strong>${stakeholderName(e.stakeholderId)}</strong>`:'—';
             return `<tr><td>${fmtDate(e.date)}</td><td><span class="badge ${e.type==='Part'?'badge-upcoming':e.type==='Service'?'badge-active':'badge-completed'}">${e.type||e.category||'—'}</span></td><td>${e.vehicleId?vehicleLabelShort(e.vehicleId):'—'}</td><td>${stakeCell}</td><td>${e.description||'—'}</td><td style="max-width:160px">${partInfo}</td><td class="td-mono" style="color:var(--danger);font-weight:600">${amd(e.amount)}</td><td><button class="btn btn-ghost btn-sm" onclick="openExpenseModal('${e.id}')">Edit</button></td></tr>`;
-          }).join('');
-        })()}</tbody></table>`:'<div class="empty-state">No expenses in period</div>'}</div>
+          }).join('')}</tbody></table>`:'<div class="empty-state">No expenses in period</div>'}</div>
       </div>
     </div>`;
 }
@@ -891,7 +843,7 @@ async function saveExpense(id) {
   const description=document.getElementById('ex-desc').value.trim();
   const notes=document.getElementById('ex-notes').value.trim();
 
-  const expense={id:id||uid(),type,amount,date,vehicleId,stakeholderId,partName,partCategory,replacedPartCondition,replacedPartDisposition,description,notes};
+  const expense={id:id||uid(),recordType:'expense',type,amount,date,vehicleId,stakeholderId,partName,partCategory,replacedPartCondition,replacedPartDisposition,description,notes};
   closeModal();
   try{
     if(!GAS_URL.includes('YOUR_DEPLOYMENT_ID')){const r=await callApi({action:'saveExpense',data:JSON.stringify(expense)});if(r.error)throw new Error(r.error);expense.id=r.id||expense.id;}
@@ -925,9 +877,8 @@ function openStakeholderModal(stakeholderId, fromExpense) {
             <th style="text-align:left;padding:8px;border-bottom:1px solid var(--border);color:var(--muted);font-size:10px;text-transform:uppercase">Name</th>
             <th style="text-align:left;padding:8px;border-bottom:1px solid var(--border);color:var(--muted);font-size:10px;text-transform:uppercase">Type</th>
             <th style="text-align:left;padding:8px;border-bottom:1px solid var(--border);color:var(--muted);font-size:10px;text-transform:uppercase">Phone</th>
-            <th style="text-align:right;padding:8px;border-bottom:1px solid var(--border);color:var(--muted);font-size:10px;text-transform:uppercase">Billed</th>
-            <th style="text-align:right;padding:8px;border-bottom:1px solid var(--border);color:var(--muted);font-size:10px;text-transform:uppercase">Paid</th>
-            <th style="text-align:right;padding:8px;border-bottom:1px solid var(--border);color:var(--muted);font-size:10px;text-transform:uppercase">Outstanding</th>
+            <th style="text-align:right;padding:8px;border-bottom:1px solid var(--border);color:var(--muted);font-size:10px;text-transform:uppercase">Expenses</th>
+            <th style="text-align:right;padding:8px;border-bottom:1px solid var(--border);color:var(--muted);font-size:10px;text-transform:uppercase">Total Spent</th>
             <th></th>
           </tr></thead>
           <tbody>${state.stakeholders.map(st=>{
@@ -936,12 +887,10 @@ function openStakeholderModal(stakeholderId, fromExpense) {
               <td style="padding:10px 8px;font-weight:600">${st.name}</td>
               <td style="padding:10px 8px;color:var(--muted)">${st.type||'—'}</td>
               <td style="padding:10px 8px">${st.phone||'—'}</td>
-              <td style="padding:10px 8px;text-align:right">${amd(stats.billed)}</td>
-              <td style="padding:10px 8px;text-align:right;color:var(--success)">${amd(stats.paidAmt)}</td>
-              <td style="padding:10px 8px;text-align:right;font-weight:${stats.outstanding>0?'700':'400'};color:${stats.outstanding>0?'var(--danger)':'var(--muted)'}">${amd(stats.outstanding)}</td>
+              <td style="padding:10px 8px;text-align:right">${stats.count}</td>
+              <td style="padding:10px 8px;text-align:right;font-weight:600">${amd(stats.total)}</td>
               <td style="padding:10px 8px;white-space:nowrap">
                 <button class="btn btn-ghost btn-sm" onclick="openStakeholderModal('${st.id}')">Edit</button>
-                ${stats.outstanding>0?`<button class="btn btn-primary btn-sm" onclick="openStakeholderPaymentModal('${st.id}')">Pay</button>`:''}
               </td>
             </tr>`;
           }).join('')}</tbody>
@@ -1005,116 +954,6 @@ async function saveStakeholder(id, fromExpense) {
   }catch(e){toast('Error: '+e.message,'error');}
   if(fromExpense) openExpenseModal();
   else renderPage();
-}
-
-// ── STAKEHOLDER PAYMENT ALLOCATION ────────────────────────────────────────
-// Enter the lump sum actually paid, then spread it across the stakeholder's
-// unpaid works. The amount is auto-split (fills each work's full cost in date
-// order until the money runs out) and every field stays editable.
-function openStakeholderPaymentModal(stakeholderId) {
-  const s=state.stakeholders.find(x=>x.id===stakeholderId); if(!s)return;
-  const paid=paidExpenseIdSet();
-  const outstanding=state.expenses.filter(e=>e.stakeholderId===stakeholderId&&(e.type==='Part'||e.type==='Service')&&!paid.has(e.id)).sort((a,b)=>a.date>b.date?1:-1);
-  const stats=stakeholderStats(stakeholderId);
-  const totalOut=outstanding.reduce((sum,e)=>sum+(Number(e.amount)||0),0);
-
-  openModal(`<div class="modal-overlay"><div class="modal modal-wide">
-    <div class="modal-header"><div class="modal-title">Pay ${s.name}</div>${CLOSE_BTN}</div>
-    <div class="modal-body">
-      <div class="info-list" style="margin-bottom:16px">
-        <div class="info-row"><span class="info-key">Total billed</span><span class="info-val">${amd(stats.billed)}</span></div>
-        <div class="info-row"><span class="info-key">Already paid</span><span class="info-val" style="color:var(--success)">${amd(stats.paidAmt)}</span></div>
-        <div class="info-row"><span class="info-key">Outstanding</span><span class="info-val" style="color:var(--danger);font-weight:700">${amd(stats.outstanding)}</span></div>
-      </div>
-
-      ${outstanding.length ? `
-        <div class="form-grid">
-          <div class="form-group"><label class="form-label">Amount paid <span class="req">*</span></label><input type="number" class="form-control" id="stk-pay-amount" min="0" step="any" value="${totalOut}" oninput="autoSplitStkPay()"></div>
-          <div class="form-group"><label class="form-label">Payment Date</label><input type="date" class="form-control" id="stk-pay-date" value="${todayStr()}"></div>
-          <div class="form-group"><label class="form-label">Method</label><select class="form-control" id="stk-pay-method"><option>Cash</option><option>Card</option><option>Transfer</option></select></div>
-        </div>
-
-        <div style="display:flex;align-items:center;gap:10px;margin:14px 0 8px">
-          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)">Allocate to works</div>
-          <button type="button" class="btn btn-ghost btn-sm" onclick="autoSplitStkPay()">↻ Auto-split</button>
-          <span style="margin-left:auto;font-size:12px" id="stk-alloc-summary"></span>
-        </div>
-        <div style="border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:16px">
-          ${outstanding.map(e=>`
-          <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border);font-size:13px">
-            <div style="flex:1;min-width:0">
-              <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${e.description||e.partName||e.type}</div>
-              <div style="font-size:11px;color:var(--muted)">${e.type}${e.partName?' · '+e.partName:''}${e.vehicleId?' · '+vehicleLabelShort(e.vehicleId):''} · ${fmtDate(e.date)} · cost ${amd(e.amount)}</div>
-            </div>
-            <input type="number" class="form-control stk-alloc" data-id="${e.id}" data-cost="${Number(e.amount)||0}" min="0" step="any" placeholder="0" style="width:120px;text-align:right" oninput="refreshStkAllocSummary()">
-          </div>`).join('')}
-        </div>
-
-        <div class="form-group form-full"><label class="form-label">Notes</label><input type="text" class="form-control" id="stk-pay-notes" placeholder="Optional"></div>
-      ` : `<div style="color:var(--success);font-weight:600;margin-bottom:16px;padding:12px;border:1px solid var(--success);border-radius:var(--radius)">✓ All works already paid</div>`}
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-primary" id="stk-pay-btn" onclick="saveStakeholderPayment('${stakeholderId}')" ${outstanding.length?'':'disabled'}>Record Payment</button>
-    </div>
-  </div></div>`);
-
-  if(outstanding.length) autoSplitStkPay();
-}
-
-// Distribute the entered amount across works in order, filling each work's
-// full cost until the money runs out (last one may get a partial amount).
-function autoSplitStkPay() {
-  let remaining=Number(document.getElementById('stk-pay-amount').value)||0;
-  document.querySelectorAll('.stk-alloc').forEach(inp=>{
-    const cost=Number(inp.dataset.cost)||0;
-    const give=Math.max(0,Math.min(cost,remaining));
-    inp.value=give?give:'';
-    remaining-=give;
-  });
-  refreshStkAllocSummary();
-}
-
-function refreshStkAllocSummary() {
-  const amt=Number(document.getElementById('stk-pay-amount').value)||0;
-  let alloc=0;
-  document.querySelectorAll('.stk-alloc').forEach(inp=>{ alloc+=Number(inp.value)||0; });
-  const rem=amt-alloc;
-  const el=document.getElementById('stk-alloc-summary');
-  if(el){
-    const over=rem<-0.001;
-    const color=Math.abs(rem)<0.001?'var(--success)':(over?'var(--danger)':'var(--muted)');
-    el.innerHTML=`Allocated <b>${amd(alloc)}</b> of <b>${amd(amt)}</b> · <span style="color:${color}">${over?'over by '+amd(-rem):amd(rem)+' left'}</span>`;
-  }
-  const btn=document.getElementById('stk-pay-btn');
-  if(btn) btn.disabled=!(amt>0&&alloc>0&&alloc<=amt+0.001);
-}
-
-async function saveStakeholderPayment(stakeholderId) {
-  const amount=Number(document.getElementById('stk-pay-amount').value)||0;
-  if(amount<=0){toast('Enter the amount paid','error');return;}
-  const allocs=[]; let allocSum=0;
-  document.querySelectorAll('.stk-alloc').forEach(inp=>{
-    const v=Number(inp.value)||0;
-    if(v>0){ allocs.push({id:inp.dataset.id,amt:v}); allocSum+=v; }
-  });
-  if(!allocs.length){toast('Allocate the payment to at least one work','error');return;}
-  if(allocSum>amount+0.001){toast('Allocated more than the amount paid','error');return;}
-  const payment={
-    id:uid(), stakeholderId,
-    date:document.getElementById('stk-pay-date').value,
-    amount, method:document.getElementById('stk-pay-method').value,
-    expenseIds:allocs.map(a=>a.id).join(','),
-    allocations:allocs.map(a=>a.id+':'+a.amt).join(','),
-    notes:document.getElementById('stk-pay-notes').value.trim(),
-  };
-  closeModal();
-  try{
-    if(!GAS_URL.includes('YOUR_DEPLOYMENT_ID')){const r=await callApi({action:'saveStakeholderPayment',data:JSON.stringify(payment)});if(r.error)throw new Error(r.error);payment.id=r.id||payment.id;}
-    state.stakeholderPayments.push(payment);
-    toast(`Payment of ${amd(amount)} recorded across ${allocs.length} work${allocs.length!==1?'s':''}`, 'success');
-  }catch(e){toast('Error: '+e.message,'error');}
-  renderPage();
 }
 
 async function deleteStakeholder(id) {
