@@ -416,7 +416,7 @@ function renderFinances(body, actions) {
       ${Object.keys(byVehicle).length?`<div class="card"><div class="card-header"><div class="card-title">Expenses by Vehicle</div></div><div class="card-body">${barList(byVehicle,expTotal,'var(--warning)')}</div></div>`:''}
       <div class="card">
         <div class="card-header"><div class="card-title">Recent Payments</div></div>
-        <div class="table-wrap">${recentPay.length?`<table><thead><tr><th>Date</th><th>Customer</th><th>Vehicle</th><th>Method</th><th>Type</th><th>Amount</th></tr></thead><tbody>${recentPay.map(p=>{const b=state.bookings.find(x=>x.id===p.bookingId);return `<tr><td>${fmtDate(p.date)}</td><td>${b?customerName(b.customerId):'—'}</td><td>${b?vehicleLabelShort(b.vehicleId):'—'}</td><td>${p.method||'—'}</td><td>${p.type||'—'}</td><td class="td-mono" style="color:var(--success);font-weight:600">${amd(p.amount)}</td></tr>`;}).join('')}</tbody></table>`:'<div class="empty-state">No payments in period</div>'}</div>
+        <div class="table-wrap">${recentPay.length?`<table><thead><tr><th>Date</th><th>Customer</th><th>Vehicle</th><th>Method</th><th>Type</th><th>Amount</th></tr></thead><tbody>${recentPay.map(p=>{const b=state.bookings.find(x=>x.id===p.bookingId);const customerId=b?.customerId||p.customerId;const vehicleId=b?.vehicleId||p.vehicleId;return `<tr><td>${fmtDate(p.date)}</td><td>${customerId?customerName(customerId):'—'}</td><td>${vehicleId?vehicleLabelShort(vehicleId):'—'}</td><td>${p.method||'—'}</td><td>${p.type||'—'}</td><td class="td-mono" style="color:var(--success);font-weight:600">${amd(p.amount)}</td></tr>`;}).join('')}</tbody></table>`:'<div class="empty-state">No payments in period</div>'}</div>
       </div>
       <div class="card dash-full">
         <div class="card-header"><div class="card-title">Expenses</div></div>
@@ -615,7 +615,8 @@ function openPaymentModal(bookingId) {
 
 async function savePayment(bookingId) {
   const amount=Number(document.getElementById('pay-amt').value)||0, date=document.getElementById('pay-date').value;
-  const payment={id:uid(),bookingId,amount,date,method:document.getElementById('pay-meth').value,type:document.getElementById('pay-type').value,notes:document.getElementById('pay-notes').value.trim()};
+  const booking=state.bookings.find(b=>b.id===bookingId);
+  const payment={id:uid(),bookingId,customerId:booking?.customerId||'',vehicleId:booking?.vehicleId||'',amount,date,method:document.getElementById('pay-meth').value,type:document.getElementById('pay-type').value,notes:document.getElementById('pay-notes').value.trim()};
   closeModal();
   try{if(!GAS_URL.includes('YOUR_DEPLOYMENT_ID')){const r=await callApi({action:'savePayment',data:JSON.stringify(payment)});if(r.error)throw new Error(r.error);payment.id=r.id||payment.id;}state.payments.push(payment);toast('Payment recorded','success');}catch(e){toast('Error: '+e.message,'error');}
   renderPage();

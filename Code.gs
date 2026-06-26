@@ -90,15 +90,18 @@ function getAll() {
 // a real booking. Booking rows have trip/customer fields; payment rows point
 // back to a booking through bookingId.
 function isPaymentLedgerRow(row) {
+  if (row.bookingId) return true;
   var hasBookingFields = !!(row.customerId || row.vehicleId || row.startDate || row.endDate || row.totalAmount);
   if (hasBookingFields) return false;
-  return String(row.recordType || '').toLowerCase() === 'payment' || !!row.bookingId;
+  return String(row.recordType || '').toLowerCase() === 'payment';
 }
 
 function paymentFromLedgerRow(row) {
   return {
     id: row.id,
     bookingId: row.bookingId,
+    customerId: row.customerId,
+    vehicleId: row.vehicleId,
     amount: row.amount,
     date: row.date,
     method: row.method,
@@ -117,6 +120,8 @@ function savePaymentRow(obj) {
     id: obj.id,
     recordType: 'payment',
     bookingId: obj.bookingId,
+    customerId: obj.customerId,
+    vehicleId: obj.vehicleId,
     amount: obj.amount,
     date: obj.date,
     method: obj.method,
@@ -353,6 +358,36 @@ function migrateBookingLedger() {
       if (String(data[i][recordTypeCol]).toLowerCase() !== correctType) {
         bookingSheet.getRange(i + 1, recordTypeCol + 1).setValue(correctType);
       }
+    }
+  }
+
+  // Snapshot customer and vehicle IDs onto payment rows so Finance reports
+  // stay informative even if their linked booking later becomes unavailable.
+  var customerIdCol = headers.indexOf('customerId');
+  var vehicleIdCol = headers.indexOf('vehicleId');
+  var bookingById = {};
+  for (var b = 1; b < data.length; b++) {
+    var bookingRow = {};
+    headers.forEach(function(header, column) {
+      bookingRow[header] = fmtCell(data[b][column]);
+    });
+    if (!isPaymentLedgerRow(bookingRow)) {
+      bookingById[String(bookingRow.id)] = bookingRow;
+    }
+  }
+  for (var p = 1; p < data.length; p++) {
+    var paymentRow = {};
+    headers.forEach(function(header, column) {
+      paymentRow[header] = fmtCell(data[p][column]);
+    });
+    if (!isPaymentLedgerRow(paymentRow)) continue;
+    var linkedBooking = bookingById[String(paymentRow.bookingId)];
+    if (!linkedBooking) continue;
+    if (customerIdCol >= 0 && !data[p][customerIdCol]) {
+      bookingSheet.getRange(p + 1, customerIdCol + 1).setValue(linkedBooking.customerId || '');
+    }
+    if (vehicleIdCol >= 0 && !data[p][vehicleIdCol]) {
+      bookingSheet.getRange(p + 1, vehicleIdCol + 1).setValue(linkedBooking.vehicleId || '');
     }
   }
 
