@@ -6,7 +6,7 @@ var SS = SpreadsheetApp.getActiveSpreadsheet();
 var SHEETS = {
   vehicles:     { name: 'Vehicles',     cols: ['id','make','model','year','plate','color','status','dailyRate','mileage','insuranceExpiry','regExpiry','notes'] },
   customers:    { name: 'Customers',    cols: ['id','name','phone','email','idNumber','licenseNumber','address','notes','createdAt'] },
-  bookings:     { name: 'Bookings',     cols: ['id','customerId','vehicleId','startDate','endDate','returnDate','dailyRate','totalAmount','deposit','cancelled','notes','createdAt'] },
+  bookings:     { name: 'Bookings',     cols: ['id','customerId','vehicleId','startDate','endDate','returnDate','dailyRate','totalAmount','deposit','cancelled','notes','createdAt','startTime','endTime','returnTime'] },
   payments:     { name: 'Payments',     cols: ['id','bookingId','amount','date','method','type','notes'] },
   expenses:     { name: 'Expenses',     cols: ['id','vehicleId','type','amount','date','stakeholderId','partName','replacedPartCondition','replacedPartDisposition','description','notes'] },
   stakeholders: { name: 'Stakeholders', cols: ['id','name','type','phone','notes'] },
@@ -17,19 +17,19 @@ function doGet(e) {
   var result;
   try {
     var action = e.parameter.action;
-    if      (action === 'getAll')              result = getAll();
-    else if (action === 'saveVehicle')         result = saveRow('vehicles',     JSON.parse(e.parameter.data));
-    else if (action === 'deleteVehicle')       result = deleteRow('vehicles',   e.parameter.id);
-    else if (action === 'saveCustomer')        result = saveRow('customers',    JSON.parse(e.parameter.data));
-    else if (action === 'deleteCustomer')      result = deleteRow('customers',  e.parameter.id);
-    else if (action === 'saveBooking')         result = saveRow('bookings',     JSON.parse(e.parameter.data));
-    else if (action === 'deleteBooking')       result = deleteRow('bookings',   e.parameter.id);
-    else if (action === 'savePayment')         result = saveRow('payments',     JSON.parse(e.parameter.data));
-    else if (action === 'deletePayment')       result = deleteRow('payments',   e.parameter.id);
-    else if (action === 'saveExpense')         result = saveRow('expenses',     JSON.parse(e.parameter.data));
-    else if (action === 'deleteExpense')       result = deleteRow('expenses',   e.parameter.id);
-    else if (action === 'saveStakeholder')     result = saveRow('stakeholders', JSON.parse(e.parameter.data));
-    else if (action === 'deleteStakeholder')   result = deleteRow('stakeholders',e.parameter.id);
+    if      (action === 'getAll')             result = getAll();
+    else if (action === 'saveVehicle')        result = saveRow('vehicles',     JSON.parse(e.parameter.data));
+    else if (action === 'deleteVehicle')      result = deleteRow('vehicles',   e.parameter.id);
+    else if (action === 'saveCustomer')       result = saveRow('customers',    JSON.parse(e.parameter.data));
+    else if (action === 'deleteCustomer')     result = deleteRow('customers',  e.parameter.id);
+    else if (action === 'saveBooking')        result = saveRow('bookings',     JSON.parse(e.parameter.data));
+    else if (action === 'deleteBooking')      result = deleteRow('bookings',   e.parameter.id);
+    else if (action === 'savePayment')        result = saveRow('payments',     JSON.parse(e.parameter.data));
+    else if (action === 'deletePayment')      result = deleteRow('payments',   e.parameter.id);
+    else if (action === 'saveExpense')        result = saveRow('expenses',     JSON.parse(e.parameter.data));
+    else if (action === 'deleteExpense')      result = deleteRow('expenses',   e.parameter.id);
+    else if (action === 'saveStakeholder')    result = saveRow('stakeholders', JSON.parse(e.parameter.data));
+    else if (action === 'deleteStakeholder')  result = deleteRow('stakeholders',e.parameter.id);
     else result = { error: 'Unknown action: ' + action };
   } catch(err) {
     result = { error: err.message };
@@ -51,6 +51,17 @@ function getAll() {
   };
 }
 
+// ── Value formatter ────────────────────────────────────────────────────────
+function fmtCell(val) {
+  if (val instanceof Date) {
+    var y = val.getFullYear();
+    var m = ('0' + (val.getMonth() + 1)).slice(-2);
+    var d = ('0' + val.getDate()).slice(-2);
+    return y + '-' + m + '-' + d;
+  }
+  return (val === undefined || val === null) ? '' : String(val);
+}
+
 // ── Sheet helpers ──────────────────────────────────────────────────────────
 function getSheet(key) {
   var cfg = SHEETS[key];
@@ -64,43 +75,52 @@ function getSheet(key) {
   return sheet;
 }
 
-function fmtCell(val) {
-  if (val instanceof Date) {
-    // Sheets returns date cells as Date objects — format as YYYY-MM-DD
-    var y = val.getFullYear();
-    var m = ('0' + (val.getMonth() + 1)).slice(-2);
-    var d = ('0' + val.getDate()).slice(-2);
-    return y + '-' + m + '-' + d;
-  }
-  return (val === undefined || val === null) ? '' : String(val);
-}
-
+// Reads by actual sheet header names — robust against column reordering
+// and automatically handles sheets that have fewer columns than the definition.
 function readSheet(key) {
   var sheet = getSheet(key);
-  var cols  = SHEETS[key].cols;
   var data  = sheet.getDataRange().getValues();
   if (data.length <= 1) return [];
+  var headers = data[0].map(String);
   return data.slice(1).map(function(row) {
     var obj = {};
-    cols.forEach(function(c, i) { obj[c] = fmtCell(row[i]); });
+    headers.forEach(function(h, i) { obj[h] = fmtCell(row[i]); });
     return obj;
   }).filter(function(r) { return r.id; });
 }
 
+// Writes by actual sheet header names — auto-adds missing columns as needed.
 function saveRow(key, obj) {
   var sheet = getSheet(key);
-  var cols  = SHEETS[key].cols;
-  var data  = sheet.getDataRange().getValues();
+  var cfg   = SHEETS[key];
 
+  // Refresh headers (may have grown)
+  var lastCol = sheet.getLastColumn();
+  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
+
+  // Auto-add any columns from our definition that the sheet doesn't have yet
+  cfg.cols.forEach(function(col) {
+    if (headers.indexOf(col) === -1) {
+      lastCol++;
+      sheet.getRange(1, lastCol).setValue(col).setFontWeight('bold').setBackground('#1e3a5f').setFontColor('#ffffff');
+      headers.push(col);
+    }
+  });
+
+  // Build row data in sheet column order
+  var rowData = headers.map(function(h) {
+    return obj[h] !== undefined ? obj[h] : '';
+  });
+
+  // Find existing row by id
+  var data   = sheet.getDataRange().getValues();
   var rowIdx = -1;
   for (var i = 1; i < data.length; i++) {
     if (String(data[i][0]) === String(obj.id)) { rowIdx = i + 1; break; }
   }
 
-  var rowData = cols.map(function(c) { return obj[c] !== undefined ? obj[c] : ''; });
-
   if (rowIdx > 0) {
-    sheet.getRange(rowIdx, 1, 1, cols.length).setValues([rowData]);
+    sheet.getRange(rowIdx, 1, 1, headers.length).setValues([rowData]);
   } else {
     sheet.appendRow(rowData);
   }
@@ -119,9 +139,25 @@ function deleteRow(key, id) {
   return { ok: false, error: 'Row not found' };
 }
 
-// ── First-run / migration setup ────────────────────────────────────────────
-// Run this once after updating the schema to recreate missing sheets.
+// ── Setup / migration ──────────────────────────────────────────────────────
+// Run once after schema changes — safe to run on existing data.
 function setupSheets() {
-  Object.keys(SHEETS).forEach(function(key) { getSheet(key); });
-  SpreadsheetApp.getUi().alert('All sheets ready!');
+  var added = [];
+  Object.keys(SHEETS).forEach(function(key) {
+    var cfg   = SHEETS[key];
+    var sheet = SS.getSheetByName(cfg.name);
+    if (!sheet) { getSheet(key); added.push(cfg.name + ' (created)'); return; }
+    var lastCol = sheet.getLastColumn();
+    var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
+    cfg.cols.forEach(function(col) {
+      if (headers.indexOf(col) === -1) {
+        lastCol++;
+        sheet.getRange(1, lastCol).setValue(col).setFontWeight('bold').setBackground('#1e3a5f').setFontColor('#ffffff');
+        headers.push(col);
+        added.push(cfg.name + '.' + col);
+      }
+    });
+  });
+  var msg = added.length ? 'Added: ' + added.join(', ') : 'All sheets already up to date.';
+  SpreadsheetApp.getUi().alert(msg);
 }

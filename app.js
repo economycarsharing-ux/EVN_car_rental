@@ -49,7 +49,14 @@ function fmtDate(d) {
   const dt = new Date(d); if (isNaN(dt)) return String(d);
   return dt.toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' });
 }
+function fmtDateTime(date, time) {
+  const d = fmtDate(date);
+  if (!d || d === '—') return '—';
+  if (!time) return d;
+  return `${d}<br><small style="color:var(--muted);font-size:11px">${time}</small>`;
+}
 function todayStr() { return new Date().toISOString().slice(0,10); }
+function currentTimeStr() { const n=new Date(); return ('0'+n.getHours()).slice(-2)+':'+('0'+n.getMinutes()).slice(-2); }
 function diffDays(a, b) { return Math.max(1, Math.round((new Date(b)-new Date(a))/86400000)); }
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 
@@ -57,9 +64,11 @@ function uid() { return Date.now().toString(36) + Math.random().toString(36).sli
 function bookingStatus(b) {
   if (b.cancelled===true || String(b.cancelled).toLowerCase()==='true') return 'Cancelled';
   if (b.returnDate) return 'Completed';
-  const now = todayStr();
-  if (b.startDate > now) return 'Upcoming';
-  if (b.endDate   < now) return 'Overdue';
+  const nowDate = todayStr();
+  if (b.startDate > nowDate) return 'Upcoming';
+  if (b.endDate   < nowDate) return 'Overdue';
+  // Same day: if return time is set and has passed, mark Overdue
+  if (b.endDate === nowDate && b.endTime && currentTimeStr() > b.endTime) return 'Overdue';
   return 'Active';
 }
 
@@ -169,11 +178,11 @@ function renderDashboard(body, actions) {
           <button class="btn btn-primary btn-sm" onclick="openBookingModal()">+ New Booking</button>
         </div>
         <div class="table-wrap">
-          ${activeSorted.length ? `<table><thead><tr><th>Customer</th><th>Vehicle</th><th>End Date</th><th>Days</th><th>Total</th><th>Balance</th><th>Status</th><th></th></tr></thead><tbody>
+          ${activeSorted.length ? `<table><thead><tr><th>Customer</th><th>Vehicle</th><th>Return Due</th><th>Days</th><th>Total</th><th>Balance</th><th>Status</th><th></th></tr></thead><tbody>
           ${activeSorted.map(b=>{
             const paid=bookingPaid(b.id), bal=(Number(b.totalAmount)||0)-paid;
             const days = b._st==='Overdue' ? `<span style="color:var(--danger)">+${diffDays(b.endDate,todayStr())}d</span>` : diffDays(todayStr(),b.endDate)+'d left';
-            return `<tr><td class="td-bold">${customerName(b.customerId)}</td><td>${vehicleLabelShort(b.vehicleId)}</td><td>${fmtDate(b.endDate)}</td><td>${days}</td><td class="td-mono">${amd(b.totalAmount)}</td><td class="td-mono" style="${bal>0?'color:var(--danger);font-weight:700':'color:var(--success)'}">${amd(bal)}</td><td>${statusBadge(b._st)}</td><td style="white-space:nowrap"><button class="btn btn-ghost btn-sm" onclick="openBookingModal('${b.id}')">Edit</button> <button class="btn btn-ghost btn-sm" onclick="openPaymentModal('${b.id}')">Pay</button></td></tr>`;
+            return `<tr><td class="td-bold">${customerName(b.customerId)}</td><td>${vehicleLabelShort(b.vehicleId)}</td><td>${fmtDateTime(b.endDate,b.endTime)}</td><td>${days}</td><td class="td-mono">${amd(b.totalAmount)}</td><td class="td-mono" style="${bal>0?'color:var(--danger);font-weight:700':'color:var(--success)'}">${amd(bal)}</td><td>${statusBadge(b._st)}</td><td style="white-space:nowrap"><button class="btn btn-ghost btn-sm" onclick="openBookingModal('${b.id}')">Edit</button> <button class="btn btn-ghost btn-sm" onclick="openPaymentModal('${b.id}')">Pay</button></td></tr>`;
           }).join('')}
           </tbody></table>` : `<div class="empty-state"><div>No active rentals right now</div></div>`}
         </div>
@@ -234,15 +243,18 @@ function renderBookings(body, actions) {
     </div>
     <div class="card">
       <div class="table-wrap">
-        ${filtered.length?`<table><thead><tr><th>Customer</th><th>Vehicle</th><th>Start</th><th>End / Return</th><th>Days</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th></th></tr></thead><tbody>
+        ${filtered.length?`<table><thead><tr><th>Customer</th><th>Vehicle</th><th>Pickup</th><th>Return Due</th><th>Days</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th></th></tr></thead><tbody>
         ${filtered.map(b=>{
           const paid=bookingPaid(b.id),bal=(Number(b.totalAmount)||0)-paid;
           const days=diffDays(b.startDate,b.returnDate||b.endDate);
+          const returnDisplay = b.returnDate
+            ? fmtDateTime(b.returnDate, b.returnTime) + ' <small style="color:var(--success)">(ret)</small>'
+            : fmtDateTime(b.endDate, b.endTime);
           return `<tr>
             <td class="td-bold">${customerName(b.customerId)}</td>
             <td>${vehicleLabelShort(b.vehicleId)}<br><small style="color:var(--muted)">${vehicleById(b.vehicleId)?.plate||''}</small></td>
-            <td>${fmtDate(b.startDate)}</td>
-            <td>${fmtDate(b.returnDate||b.endDate)}${b.returnDate?` <small style="color:var(--success)">(ret)</small>`:''}</td>
+            <td>${fmtDateTime(b.startDate, b.startTime)}</td>
+            <td>${returnDisplay}</td>
             <td>${days}</td>
             <td class="td-mono">${amd(b.totalAmount)}</td>
             <td class="td-mono" style="color:var(--success)">${amd(paid)}</td>
@@ -428,12 +440,18 @@ function openBookingModal(bookingId, prefillCustomerId) {
           <select class="form-control" id="bk-veh" onchange="calcBookingTotal()"><option value="">— select —</option>${vehOpts}</select>
         </div>
         <div class="form-group">
-          <label class="form-label">Start Date <span class="req">*</span></label>
-          <input type="date" class="form-control" id="bk-start" value="${b?.startDate||todayStr()}" onchange="calcBookingTotal()">
+          <label class="form-label">Pickup Date & Time</label>
+          <div style="display:flex;gap:6px">
+            <input type="date" class="form-control" id="bk-start" style="flex:1.5" value="${b?.startDate||todayStr()}" onchange="calcBookingTotal()">
+            <input type="time" class="form-control" id="bk-start-time" style="flex:1" value="${b?.startTime||''}">
+          </div>
         </div>
         <div class="form-group">
-          <label class="form-label">End Date <span class="req">*</span></label>
-          <input type="date" class="form-control" id="bk-end" value="${b?.endDate||''}" onchange="calcBookingTotal()">
+          <label class="form-label">Return Due Date & Time</label>
+          <div style="display:flex;gap:6px">
+            <input type="date" class="form-control" id="bk-end" style="flex:1.5" value="${b?.endDate||''}" onchange="calcBookingTotal()">
+            <input type="time" class="form-control" id="bk-end-time" style="flex:1" value="${b?.endTime||''}">
+          </div>
         </div>
         <div class="form-group">
           <label class="form-label">Daily Rate (֏)</label>
@@ -447,7 +465,13 @@ function openBookingModal(bookingId, prefillCustomerId) {
           <label class="form-label">Deposit (֏)</label>
           <input type="number" class="form-control" id="bk-deposit" value="${b?.deposit||''}">
         </div>
-        ${b?`<div class="form-group"><label class="form-label">Return Date</label><input type="date" class="form-control" id="bk-return" value="${b?.returnDate||''}"></div>`:'<div></div>'}
+        ${b?`<div class="form-group">
+          <label class="form-label">Actual Return Date & Time</label>
+          <div style="display:flex;gap:6px">
+            <input type="date" class="form-control" id="bk-return" style="flex:1.5" value="${b?.returnDate||''}">
+            <input type="time" class="form-control" id="bk-return-time" style="flex:1" value="${b?.returnTime||''}">
+          </div>
+        </div>`:'<div></div>'}
         <div class="form-group form-full">
           <label class="form-label">Notes</label>
           <textarea class="form-control" id="bk-notes">${b?.notes||''}</textarea>
@@ -479,6 +503,9 @@ async function saveBooking(id) {
   const booking={
     id:id||uid(), customerId, vehicleId, startDate, endDate,
     returnDate:document.getElementById('bk-return')?.value||'',
+    startTime:document.getElementById('bk-start-time')?.value||'',
+    endTime:document.getElementById('bk-end-time')?.value||'',
+    returnTime:document.getElementById('bk-return-time')?.value||'',
     dailyRate:Number(document.getElementById('bk-rate').value)||0,
     totalAmount:Number(document.getElementById('bk-total').value)||0,
     deposit:Number(document.getElementById('bk-deposit').value)||0,
@@ -515,14 +542,17 @@ function openReturnModal(bookingId) {
       <div class="info-list" style="margin-bottom:16px">
         <div class="info-row"><span class="info-key">Customer</span><span class="info-val">${customerName(b.customerId)}</span></div>
         <div class="info-row"><span class="info-key">Vehicle</span><span class="info-val">${vehicleLabel(b.vehicleId)}</span></div>
-        <div class="info-row"><span class="info-key">Planned return</span><span class="info-val">${fmtDate(b.endDate)}</span></div>
+        <div class="info-row"><span class="info-key">Planned return</span><span class="info-val">${fmtDateTime(b.endDate, b.endTime)}</span></div>
         <div class="info-row"><span class="info-key">Total</span><span class="info-val">${amd(b.totalAmount)}</span></div>
         <div class="info-row"><span class="info-key">Paid</span><span class="info-val" style="color:var(--success)">${amd(paid)}</span></div>
         <div class="info-row"><span class="info-key">Balance</span><span class="info-val" style="color:${bal>0?'var(--danger)':'var(--success)'}">${amd(bal)}</span></div>
       </div>
       <div class="form-group">
-        <label class="form-label">Actual Return Date</label>
-        <input type="date" class="form-control" id="ret-date" value="${todayStr()}">
+        <label class="form-label">Actual Return Date & Time</label>
+        <div style="display:flex;gap:6px">
+          <input type="date" class="form-control" id="ret-date" style="flex:1.5" value="${todayStr()}">
+          <input type="time" class="form-control" id="ret-time" style="flex:1" value="${currentTimeStr()}">
+        </div>
       </div>
     </div>
     <div class="modal-footer">
@@ -534,8 +564,9 @@ function openReturnModal(bookingId) {
 
 async function confirmReturn(bookingId) {
   const returnDate=document.getElementById('ret-date').value;
+  const returnTime=document.getElementById('ret-time').value;
   const b=state.bookings.find(x=>x.id===bookingId); if(!b)return;
-  const updated={...b,returnDate};
+  const updated={...b,returnDate,returnTime};
   closeModal();
   try{if(!GAS_URL.includes('YOUR_DEPLOYMENT_ID')){const r=await callApi({action:'saveBooking',data:JSON.stringify(updated)});if(r.error)throw new Error(r.error);}const idx=state.bookings.findIndex(x=>x.id===bookingId);if(idx>=0)state.bookings[idx]=updated;toast('Vehicle returned','success');}catch(e){toast('Error: '+e.message,'error');}
   renderPage();
