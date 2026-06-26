@@ -1,12 +1,13 @@
 {
-  "name": "Car Rental Manager",
-  "short_name": "CarRental",
-  "description": "Fleet & booking management for car rental business",
+  "name": "Economy Car Rental",
+  "short_name": "EcoRent",
+  "description": "Economy Car Rental — Yerevan, Armenia",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#0f172a",
   "theme_color": "#2563eb",
   "icons": [
-    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+    { "src": "icon.png", "sizes": "1092x1092", "type": "image/png", "purpose": "any" },
+    { "src": "icon.png", "sizes": "1092x1092", "type": "image/png", "purpose": "maskable" }
   ]
 }

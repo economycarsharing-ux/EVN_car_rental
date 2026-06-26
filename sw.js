@@ -1,4 +1,4 @@
-const CACHE = 'car-rental-v16';
+const CACHE = 'car-rental-v17';
 
 const ASSETS = [
   './',
@@ -7,7 +7,7 @@ const ASSETS = [
   './app.js?v=15',
   './config.js?v=6',
   './manifest.json',
-  './icon.svg'
+  './icon.png'
 ];
 
 self.addEventListener('install', event => {
