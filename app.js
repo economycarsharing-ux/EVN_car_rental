@@ -3,7 +3,7 @@
 // ── State ──────────────────────────────────────────────────────────────────
 const state = {
   page: 'dashboard',
-  vehicles: [], customers: [], bookings: [], payments: [], expenses: [],
+  vehicles: [], customers: [], bookings: [], payments: [], expenses: [], stakeholders: [],
   loading: false,
   bookingFilter: 'all', bookingSearch: '',
   vehicleFilter: 'all',
@@ -26,11 +26,12 @@ async function fetchAll() {
   try {
     const d = await callApi({ action: 'getAll' });
     if (d.error) throw new Error(d.error);
-    state.vehicles  = d.vehicles  || [];
-    state.customers = d.customers || [];
-    state.bookings  = d.bookings  || [];
-    state.payments  = d.payments  || [];
-    state.expenses  = d.expenses  || [];
+    state.vehicles    = d.vehicles    || [];
+    state.customers   = d.customers   || [];
+    state.bookings    = d.bookings    || [];
+    state.payments    = d.payments    || [];
+    state.expenses    = d.expenses    || [];
+    state.stakeholders= d.stakeholders|| [];
   } catch (e) { toast('Failed to load: ' + e.message, 'error'); }
   state.loading = false; renderPage();
 }
@@ -341,6 +342,8 @@ function renderCustomers(body, actions) {
 // ──────────────────────────────────────────────────────────────────────────
 // FINANCES
 // ──────────────────────────────────────────────────────────────────────────
+function stakeholderName(id) { const s=state.stakeholders.find(x=>x.id===id); return s?s.name:'—'; }
+
 function renderFinances(body, actions) {
   actions.innerHTML=`
     <select class="form-control" style="width:auto;font-size:12px" onchange="state.finPeriod=this.value;renderPage()">
@@ -349,6 +352,7 @@ function renderFinances(body, actions) {
       <option value="year" ${state.finPeriod==='year'?'selected':''}>This Year</option>
       <option value="all" ${state.finPeriod==='all'?'selected':''}>All Time</option>
     </select>
+    <button class="btn btn-secondary btn-sm" onclick="openStakeholderModal()">Mechanics</button>
     <button class="btn btn-primary btn-sm" onclick="openExpenseModal()">+ Expense</button>`;
 
   const pays=state.payments.filter(p=>periodFilter(p.date));
@@ -358,9 +362,14 @@ function renderFinances(body, actions) {
   const net=income-expTotal;
   const outstanding=state.bookings.filter(b=>{const st=bookingStatus(b);return st==='Active'||st==='Overdue'||st==='Upcoming';}).reduce((s,b)=>s+Math.max(0,(Number(b.totalAmount)||0)-bookingPaid(b.id)),0);
 
-  const byMethod={},byCat={},byVehicle={};
+  const byMethod={},byType={},byVehicle={},byStakeholder={};
   pays.forEach(p=>{const m=p.method||'Other';byMethod[m]=(byMethod[m]||0)+(Number(p.amount)||0);});
-  exps.forEach(e=>{const c=e.category||'Other';byCat[c]=(byCat[c]||0)+(Number(e.amount)||0);if(e.vehicleId){const k=vehicleLabelShort(e.vehicleId);byVehicle[k]=(byVehicle[k]||0)+(Number(e.amount)||0);}});
+  exps.forEach(e=>{
+    const t=e.type||e.category||'Other';
+    byType[t]=(byType[t]||0)+(Number(e.amount)||0);
+    if(e.vehicleId){const k=vehicleLabelShort(e.vehicleId);byVehicle[k]=(byVehicle[k]||0)+(Number(e.amount)||0);}
+    if(e.stakeholderId){const k=stakeholderName(e.stakeholderId);byStakeholder[k]=(byStakeholder[k]||0)+(Number(e.amount)||0);}
+  });
 
   function barList(obj,total,color){
     const entries=Object.entries(obj).sort((a,b)=>b[1]-a[1]);
@@ -369,7 +378,7 @@ function renderFinances(body, actions) {
   }
 
   const recentPay=[...pays].sort((a,b)=>b.date>a.date?1:-1).slice(0,8);
-  const recentExp=[...exps].sort((a,b)=>b.date>a.date?1:-1).slice(0,8);
+  const recentExp=[...exps].sort((a,b)=>b.date>a.date?1:-1).slice(0,10);
 
   body.innerHTML=`
     <div class="kpi-row">
@@ -380,15 +389,19 @@ function renderFinances(body, actions) {
     </div>
     <div class="dash-grid">
       <div class="card"><div class="card-header"><div class="card-title">Income by Method</div></div><div class="card-body">${barList(byMethod,income,'var(--success)')}</div></div>
-      <div class="card"><div class="card-header"><div class="card-title">Expenses by Category</div></div><div class="card-body">${barList(byCat,expTotal,'var(--danger)')}</div></div>
+      <div class="card"><div class="card-header"><div class="card-title">Expenses by Type</div></div><div class="card-body">${barList(byType,expTotal,'var(--danger)')}</div></div>
+      ${Object.keys(byStakeholder).length?`<div class="card"><div class="card-header"><div class="card-title">Paid to Mechanics & Suppliers</div><button class="btn btn-ghost btn-sm" onclick="openStakeholderModal()">Manage</button></div><div class="card-body">${barList(byStakeholder,expTotal,'#8b5cf6')}</div></div>`:''}
       ${Object.keys(byVehicle).length?`<div class="card"><div class="card-header"><div class="card-title">Expenses by Vehicle</div></div><div class="card-body">${barList(byVehicle,expTotal,'var(--warning)')}</div></div>`:''}
       <div class="card">
         <div class="card-header"><div class="card-title">Recent Payments</div></div>
         <div class="table-wrap">${recentPay.length?`<table><thead><tr><th>Date</th><th>Customer</th><th>Method</th><th>Type</th><th>Amount</th></tr></thead><tbody>${recentPay.map(p=>{const b=state.bookings.find(x=>x.id===p.bookingId);return `<tr><td>${fmtDate(p.date)}</td><td>${b?customerName(b.customerId):'—'}</td><td>${p.method||'—'}</td><td>${p.type||'—'}</td><td class="td-mono" style="color:var(--success);font-weight:600">${amd(p.amount)}</td></tr>`;}).join('')}</tbody></table>`:'<div class="empty-state">No payments in period</div>'}</div>
       </div>
-      <div class="card">
-        <div class="card-header"><div class="card-title">Recent Expenses</div></div>
-        <div class="table-wrap">${recentExp.length?`<table><thead><tr><th>Date</th><th>Category</th><th>Vehicle</th><th>Description</th><th>Amount</th><th></th></tr></thead><tbody>${recentExp.map(e=>`<tr><td>${fmtDate(e.date)}</td><td>${e.category||'—'}</td><td>${e.vehicleId?vehicleLabelShort(e.vehicleId):'—'}</td><td>${e.description||'—'}</td><td class="td-mono" style="color:var(--danger);font-weight:600">${amd(e.amount)}</td><td><button class="btn btn-ghost btn-sm" onclick="deleteExpense('${e.id}')">×</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state">No expenses in period</div>'}</div>
+      <div class="card dash-full">
+        <div class="card-header"><div class="card-title">Expenses</div></div>
+        <div class="table-wrap">${recentExp.length?`<table><thead><tr><th>Date</th><th>Type</th><th>Vehicle</th><th>Stakeholder</th><th>Description</th><th>Part info</th><th>Amount</th><th></th></tr></thead><tbody>${recentExp.map(e=>{
+          const partInfo=(e.type==='Part'&&e.partName)?`<small style="display:block"><b>${e.partName}</b>${e.replacedPartCondition&&e.replacedPartCondition!=='—'?` · old: ${e.replacedPartCondition}`:''}${e.replacedPartDisposition&&e.replacedPartDisposition!=='—'?' · '+e.replacedPartDisposition:''}</small>`:'—';
+          return `<tr><td>${fmtDate(e.date)}</td><td><span class="badge ${e.type==='Part'?'badge-upcoming':e.type==='Service'?'badge-active':'badge-completed'}">${e.type||e.category||'—'}</span></td><td>${e.vehicleId?vehicleLabelShort(e.vehicleId):'—'}</td><td>${e.stakeholderId?`<strong>${stakeholderName(e.stakeholderId)}</strong>`:'—'}</td><td>${e.description||'—'}</td><td style="max-width:160px">${partInfo}</td><td class="td-mono" style="color:var(--danger);font-weight:600">${amd(e.amount)}</td><td><button class="btn btn-ghost btn-sm" onclick="openExpenseModal('${e.id}')">Edit</button></td></tr>`;
+        }).join('')}</tbody></table>`:'<div class="empty-state">No expenses in period</div>'}</div>
       </div>
     </div>`;
 }
@@ -656,39 +669,241 @@ async function deleteCustomer(id) {
 // ──────────────────────────────────────────────────────────────────────────
 // MODAL: EXPENSE
 // ──────────────────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────────
+// MODAL: EXPENSE (Part / Service / other with stakeholder tracking)
+// ──────────────────────────────────────────────────────────────────────────
+const EX_TYPES = ['Part','Service','Fuel','Insurance','Registration','Fine','Cleaning','Other'];
+const OLD_PART_CONDITIONS = ['—','Good (removed for other reason)','Worn','Damaged / Broken','Missing'];
+const OLD_PART_DISPOSITIONS = ['—','Stored in garage','Discarded','Returned to supplier','Sold'];
+
 function openExpenseModal(expenseId, prefillVehicleId) {
   const e=expenseId?state.expenses.find(x=>x.id===expenseId):null;
+  const curType=e?.type||e?.category||'Part';
   const vOpts=state.vehicles.map(v=>`<option value="${v.id}" ${(e?.vehicleId===v.id||prefillVehicleId===v.id)?'selected':''}>${v.make} ${v.model} · ${v.plate}</option>`).join('');
-  openModal(`<div class="modal-overlay"><div class="modal">
+  const sOpts=state.stakeholders.map(s=>`<option value="${s.id}" ${e?.stakeholderId===s.id?'selected':''}>${s.name}${s.type?' ('+s.type+')':''}</option>`).join('');
+  const showPart=curType==='Part';
+  const showStake=curType==='Part'||curType==='Service';
+
+  openModal(`<div class="modal-overlay"><div class="modal modal-wide">
     <div class="modal-header"><div class="modal-title">${e?'Edit Expense':'Add Expense'}</div>${CLOSE_BTN}</div>
     <div class="modal-body">
       <div class="form-grid">
-        <div class="form-group"><label class="form-label">Category <span class="req">*</span></label><select class="form-control" id="ex-cat">${['Fuel','Maintenance','Insurance','Registration','Fine','Cleaning','Other'].map(c=>`<option ${e?.category===c?'selected':''}>${c}</option>`).join('')}</select></div>
-        <div class="form-group"><label class="form-label">Amount (֏) <span class="req">*</span></label><input type="number" class="form-control" id="ex-amt" value="${e?.amount||''}"></div>
-        <div class="form-group"><label class="form-label">Date <span class="req">*</span></label><input type="date" class="form-control" id="ex-date" value="${e?.date||todayStr()}"></div>
-        <div class="form-group"><label class="form-label">Vehicle</label><select class="form-control" id="ex-veh"><option value="">— general —</option>${vOpts}</select></div>
-        <div class="form-group form-full"><label class="form-label">Description</label><input type="text" class="form-control" id="ex-desc" value="${e?.description||''}" placeholder="Oil change, fuel fill-up…"></div>
-        <div class="form-group form-full"><label class="form-label">Notes</label><textarea class="form-control" id="ex-notes" style="min-height:50px">${e?.notes||''}</textarea></div>
+        <div class="form-group">
+          <label class="form-label">Type</label>
+          <select class="form-control" id="ex-type" onchange="toggleExpenseFields()">
+            ${EX_TYPES.map(t=>`<option ${curType===t?'selected':''}>${t}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Amount (֏)</label>
+          <input type="number" class="form-control" id="ex-amt" value="${e?.amount||''}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Date</label>
+          <input type="date" class="form-control" id="ex-date" value="${e?.date||todayStr()}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Vehicle</label>
+          <select class="form-control" id="ex-veh"><option value="">— general —</option>${vOpts}</select>
+        </div>
+
+        <!-- Part fields -->
+        <div id="ex-part-section" class="form-full" style="display:${showPart?'block':'none'}">
+          <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:2px">
+            <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:10px">Part / Detail Info</div>
+            <div class="form-grid">
+              <div class="form-group form-full">
+                <label class="form-label">Part / Detail name</label>
+                <input type="text" class="form-control" id="ex-partname" value="${e?.partName||''}" placeholder="Brake pads, oil filter, timing belt…">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Old part condition</label>
+                <select class="form-control" id="ex-oldcond">
+                  ${OLD_PART_CONDITIONS.map(c=>`<option ${e?.replacedPartCondition===c?'selected':''}>${c}</option>`).join('')}
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Old part disposition</label>
+                <select class="form-control" id="ex-olddisp">
+                  ${OLD_PART_DISPOSITIONS.map(d=>`<option ${e?.replacedPartDisposition===d?'selected':''}>${d}</option>`).join('')}
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Stakeholder (mechanic / supplier) -->
+        <div id="ex-stake-section" class="form-full" style="display:${showStake?'block':'none'}">
+          <div style="background:var(--primary-l);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:2px">
+            <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--primary);margin-bottom:10px">Mechanic / Supplier</div>
+            <div style="display:flex;gap:8px;align-items:flex-end">
+              <div class="form-group" style="flex:1;margin:0">
+                <select class="form-control" id="ex-stakeholder">
+                  <option value="">— none / not tracked —</option>${sOpts}
+                </select>
+              </div>
+              <button class="btn btn-ghost btn-sm" style="white-space:nowrap" onclick="openStakeholderModal(null,true)">+ New</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-group form-full">
+          <label class="form-label">Description</label>
+          <input type="text" class="form-control" id="ex-desc" value="${e?.description||''}" placeholder="What was done / bought…">
+        </div>
+        <div class="form-group form-full">
+          <label class="form-label">Notes</label>
+          <textarea class="form-control" id="ex-notes" style="min-height:50px">${e?.notes||''}</textarea>
+        </div>
       </div>
     </div>
     <div class="modal-footer">
+      ${e?`<button class="btn btn-danger" onclick="deleteExpense('${e.id}')">Delete</button>`:''}
       <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" onclick="saveExpense('${e?.id||''}')">Save</button>
     </div>
   </div></div>`);
 }
 
+function toggleExpenseFields() {
+  const type=document.getElementById('ex-type')?.value;
+  const partSec=document.getElementById('ex-part-section');
+  const stakeSec=document.getElementById('ex-stake-section');
+  if(partSec)  partSec.style.display  = type==='Part' ? 'block' : 'none';
+  if(stakeSec) stakeSec.style.display = (type==='Part'||type==='Service') ? 'block' : 'none';
+}
+
 async function saveExpense(id) {
-  const amount=Number(document.getElementById('ex-amt').value)||0,date=document.getElementById('ex-date').value;
-  const expense={id:id||uid(),category:document.getElementById('ex-cat').value,amount,date,vehicleId:document.getElementById('ex-veh').value,description:document.getElementById('ex-desc').value.trim(),notes:document.getElementById('ex-notes').value.trim()};
+  const type=document.getElementById('ex-type').value;
+  const amount=Number(document.getElementById('ex-amt').value)||0;
+  const date=document.getElementById('ex-date').value;
+  const vehicleId=document.getElementById('ex-veh').value;
+  const stakeholderId=document.getElementById('ex-stakeholder')?.value||'';
+  const partName=(type==='Part'?document.getElementById('ex-partname')?.value.trim():'') ||'';
+  const replacedPartCondition=(type==='Part'?document.getElementById('ex-oldcond')?.value:'') ||'';
+  const replacedPartDisposition=(type==='Part'?document.getElementById('ex-olddisp')?.value:'') ||'';
+  const description=document.getElementById('ex-desc').value.trim();
+  const notes=document.getElementById('ex-notes').value.trim();
+
+  const expense={id:id||uid(),type,amount,date,vehicleId,stakeholderId,partName,replacedPartCondition,replacedPartDisposition,description,notes};
   closeModal();
-  try{if(!GAS_URL.includes('YOUR_DEPLOYMENT_ID')){const r=await callApi({action:'saveExpense',data:JSON.stringify(expense)});if(r.error)throw new Error(r.error);expense.id=r.id||expense.id;}const idx=state.expenses.findIndex(e=>e.id===id);if(idx>=0)state.expenses[idx]=expense;else state.expenses.push(expense);toast(id?'Expense updated':'Expense added','success');}catch(e){toast('Error: '+e.message,'error');}
+  try{
+    if(!GAS_URL.includes('YOUR_DEPLOYMENT_ID')){const r=await callApi({action:'saveExpense',data:JSON.stringify(expense)});if(r.error)throw new Error(r.error);expense.id=r.id||expense.id;}
+    const idx=state.expenses.findIndex(e=>e.id===id);
+    if(idx>=0)state.expenses[idx]=expense;else state.expenses.push(expense);
+    toast(id?'Expense updated':'Expense added','success');
+  }catch(e){toast('Error: '+e.message,'error');}
   renderPage();
 }
 
 async function deleteExpense(id) {
   if(!confirm('Delete this expense?'))return;
+  closeModal();
   try{if(!GAS_URL.includes('YOUR_DEPLOYMENT_ID'))await callApi({action:'deleteExpense',id});state.expenses=state.expenses.filter(e=>e.id!==id);toast('Deleted','success');}catch(e){toast('Error: '+e.message,'error');}
+  renderPage();
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// MODAL: STAKEHOLDER (mechanic / supplier)
+// ──────────────────────────────────────────────────────────────────────────
+function openStakeholderModal(stakeholderId, fromExpense) {
+  const s=stakeholderId?state.stakeholders.find(x=>x.id===stakeholderId):null;
+
+  // If no specific ID and not from expense → show the management list
+  if(!stakeholderId && !fromExpense) {
+    openModal(`<div class="modal-overlay"><div class="modal modal-wide">
+      <div class="modal-header"><div class="modal-title">Mechanics & Suppliers</div>${CLOSE_BTN}</div>
+      <div class="modal-body">
+        ${state.stakeholders.length?`<table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead><tr>
+            <th style="text-align:left;padding:8px;border-bottom:1px solid var(--border);color:var(--muted);font-size:10px;text-transform:uppercase">Name</th>
+            <th style="text-align:left;padding:8px;border-bottom:1px solid var(--border);color:var(--muted);font-size:10px;text-transform:uppercase">Type</th>
+            <th style="text-align:left;padding:8px;border-bottom:1px solid var(--border);color:var(--muted);font-size:10px;text-transform:uppercase">Phone</th>
+            <th style="text-align:right;padding:8px;border-bottom:1px solid var(--border);color:var(--muted);font-size:10px;text-transform:uppercase">Total Paid</th>
+            <th></th>
+          </tr></thead>
+          <tbody>${state.stakeholders.map(st=>{
+            const total=state.expenses.filter(e=>e.stakeholderId===st.id).reduce((s,e)=>s+(Number(e.amount)||0),0);
+            return `<tr>
+              <td style="padding:10px 8px;font-weight:600">${st.name}</td>
+              <td style="padding:10px 8px;color:var(--muted)">${st.type||'—'}</td>
+              <td style="padding:10px 8px">${st.phone||'—'}</td>
+              <td style="padding:10px 8px;text-align:right;font-weight:600;color:var(--danger)">${amd(total)}</td>
+              <td style="padding:10px 8px"><button class="btn btn-ghost btn-sm" onclick="openStakeholderModal('${st.id}')">Edit</button></td>
+            </tr>`;
+          }).join('')}</tbody>
+        </table>`:`<div class="empty-state"><div class="empty-state-title">No mechanics or suppliers yet</div></div>`}
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="openStakeholderModal(null,true)">+ Add New</button>
+      </div>
+    </div></div>`);
+    return;
+  }
+
+  // Create / edit form
+  openModal(`<div class="modal-overlay"><div class="modal">
+    <div class="modal-header"><div class="modal-title">${s?'Edit':'New Mechanic / Supplier'}</div>${CLOSE_BTN}</div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-group form-full">
+          <label class="form-label">Name</label>
+          <input type="text" class="form-control" id="sk-name" value="${s?.name||''}" placeholder="Armen, Garage Nord…">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Type</label>
+          <select class="form-control" id="sk-type">
+            ${['Mechanic','Parts Shop','Both','Other'].map(t=>`<option ${s?.type===t?'selected':''}>${t}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Phone</label>
+          <input type="tel" class="form-control" id="sk-phone" value="${s?.phone||''}" placeholder="+374 91 000000">
+        </div>
+        <div class="form-group form-full">
+          <label class="form-label">Notes</label>
+          <textarea class="form-control" id="sk-notes" style="min-height:50px">${s?.notes||''}</textarea>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      ${s?`<button class="btn btn-danger" onclick="deleteStakeholder('${s.id}')">Delete</button>`:''}
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveStakeholder('${s?.id||''}',${!!fromExpense})">Save</button>
+    </div>
+  </div></div>`);
+}
+
+async function saveStakeholder(id, fromExpense) {
+  const name=document.getElementById('sk-name').value.trim();
+  const stakeholder={
+    id:id||uid(),
+    name:name||'Unnamed',
+    type:document.getElementById('sk-type').value,
+    phone:document.getElementById('sk-phone').value.trim(),
+    notes:document.getElementById('sk-notes').value.trim(),
+  };
+  closeModal();
+  try{
+    if(!GAS_URL.includes('YOUR_DEPLOYMENT_ID')){const r=await callApi({action:'saveStakeholder',data:JSON.stringify(stakeholder)});if(r.error)throw new Error(r.error);stakeholder.id=r.id||stakeholder.id;}
+    const idx=state.stakeholders.findIndex(s=>s.id===id);
+    if(idx>=0)state.stakeholders[idx]=stakeholder;else state.stakeholders.push(stakeholder);
+    toast(id?'Updated':'Saved','success');
+  }catch(e){toast('Error: '+e.message,'error');}
+  if(fromExpense) openExpenseModal();
+  else renderPage();
+}
+
+async function deleteStakeholder(id) {
+  const usedInExpenses=state.expenses.some(e=>e.stakeholderId===id);
+  if(usedInExpenses&&!confirm('This mechanic/supplier has expenses linked. Delete anyway?'))return;
+  else if(!usedInExpenses&&!confirm('Delete this mechanic/supplier?'))return;
+  closeModal();
+  try{
+    if(!GAS_URL.includes('YOUR_DEPLOYMENT_ID'))await callApi({action:'deleteStakeholder',id});
+    state.stakeholders=state.stakeholders.filter(s=>s.id!==id);
+    toast('Deleted','success');
+  }catch(e){toast('Error: '+e.message,'error');}
   renderPage();
 }
 

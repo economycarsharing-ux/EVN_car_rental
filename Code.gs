@@ -4,11 +4,12 @@
 var SS = SpreadsheetApp.getActiveSpreadsheet();
 
 var SHEETS = {
-  vehicles:  { name: 'Vehicles',  cols: ['id','make','model','year','plate','color','status','dailyRate','mileage','insuranceExpiry','regExpiry','notes'] },
-  customers: { name: 'Customers', cols: ['id','name','phone','email','idNumber','licenseNumber','address','notes','createdAt'] },
-  bookings:  { name: 'Bookings',  cols: ['id','customerId','vehicleId','startDate','endDate','returnDate','dailyRate','totalAmount','deposit','cancelled','notes','createdAt'] },
-  payments:  { name: 'Payments',  cols: ['id','bookingId','amount','date','method','type','notes'] },
-  expenses:  { name: 'Expenses',  cols: ['id','vehicleId','category','amount','date','description','notes'] },
+  vehicles:     { name: 'Vehicles',     cols: ['id','make','model','year','plate','color','status','dailyRate','mileage','insuranceExpiry','regExpiry','notes'] },
+  customers:    { name: 'Customers',    cols: ['id','name','phone','email','idNumber','licenseNumber','address','notes','createdAt'] },
+  bookings:     { name: 'Bookings',     cols: ['id','customerId','vehicleId','startDate','endDate','returnDate','dailyRate','totalAmount','deposit','cancelled','notes','createdAt'] },
+  payments:     { name: 'Payments',     cols: ['id','bookingId','amount','date','method','type','notes'] },
+  expenses:     { name: 'Expenses',     cols: ['id','vehicleId','type','amount','date','stakeholderId','partName','replacedPartCondition','replacedPartDisposition','description','notes'] },
+  stakeholders: { name: 'Stakeholders', cols: ['id','name','type','phone','notes'] },
 };
 
 // ── Entry point ────────────────────────────────────────────────────────────
@@ -16,17 +17,19 @@ function doGet(e) {
   var result;
   try {
     var action = e.parameter.action;
-    if (action === 'getAll')         result = getAll();
-    else if (action === 'saveVehicle')   result = saveRow('vehicles',   JSON.parse(e.parameter.data));
-    else if (action === 'deleteVehicle') result = deleteRow('vehicles', e.parameter.id);
-    else if (action === 'saveCustomer')  result = saveRow('customers',  JSON.parse(e.parameter.data));
-    else if (action === 'deleteCustomer')result = deleteRow('customers',e.parameter.id);
-    else if (action === 'saveBooking')   result = saveRow('bookings',   JSON.parse(e.parameter.data));
-    else if (action === 'deleteBooking') result = deleteRow('bookings', e.parameter.id);
-    else if (action === 'savePayment')   result = saveRow('payments',   JSON.parse(e.parameter.data));
-    else if (action === 'deletePayment') result = deleteRow('payments', e.parameter.id);
-    else if (action === 'saveExpense')   result = saveRow('expenses',   JSON.parse(e.parameter.data));
-    else if (action === 'deleteExpense') result = deleteRow('expenses', e.parameter.id);
+    if      (action === 'getAll')              result = getAll();
+    else if (action === 'saveVehicle')         result = saveRow('vehicles',     JSON.parse(e.parameter.data));
+    else if (action === 'deleteVehicle')       result = deleteRow('vehicles',   e.parameter.id);
+    else if (action === 'saveCustomer')        result = saveRow('customers',    JSON.parse(e.parameter.data));
+    else if (action === 'deleteCustomer')      result = deleteRow('customers',  e.parameter.id);
+    else if (action === 'saveBooking')         result = saveRow('bookings',     JSON.parse(e.parameter.data));
+    else if (action === 'deleteBooking')       result = deleteRow('bookings',   e.parameter.id);
+    else if (action === 'savePayment')         result = saveRow('payments',     JSON.parse(e.parameter.data));
+    else if (action === 'deletePayment')       result = deleteRow('payments',   e.parameter.id);
+    else if (action === 'saveExpense')         result = saveRow('expenses',     JSON.parse(e.parameter.data));
+    else if (action === 'deleteExpense')       result = deleteRow('expenses',   e.parameter.id);
+    else if (action === 'saveStakeholder')     result = saveRow('stakeholders', JSON.parse(e.parameter.data));
+    else if (action === 'deleteStakeholder')   result = deleteRow('stakeholders',e.parameter.id);
     else result = { error: 'Unknown action: ' + action };
   } catch(err) {
     result = { error: err.message };
@@ -39,11 +42,12 @@ function doGet(e) {
 // ── Read all data ──────────────────────────────────────────────────────────
 function getAll() {
   return {
-    vehicles:  readSheet('vehicles'),
-    customers: readSheet('customers'),
-    bookings:  readSheet('bookings'),
-    payments:  readSheet('payments'),
-    expenses:  readSheet('expenses'),
+    vehicles:     readSheet('vehicles'),
+    customers:    readSheet('customers'),
+    bookings:     readSheet('bookings'),
+    payments:     readSheet('payments'),
+    expenses:     readSheet('expenses'),
+    stakeholders: readSheet('stakeholders'),
   };
 }
 
@@ -67,7 +71,7 @@ function readSheet(key) {
   if (data.length <= 1) return [];
   return data.slice(1).map(function(row) {
     var obj = {};
-    cols.forEach(function(c, i) { obj[c] = row[i] === undefined || row[i] === null ? '' : String(row[i]); });
+    cols.forEach(function(c, i) { obj[c] = (row[i] === undefined || row[i] === null) ? '' : String(row[i]); });
     return obj;
   }).filter(function(r) { return r.id; });
 }
@@ -77,7 +81,6 @@ function saveRow(key, obj) {
   var cols  = SHEETS[key].cols;
   var data  = sheet.getDataRange().getValues();
 
-  // Find existing row by id
   var rowIdx = -1;
   for (var i = 1; i < data.length; i++) {
     if (String(data[i][0]) === String(obj.id)) { rowIdx = i + 1; break; }
@@ -105,8 +108,9 @@ function deleteRow(key, id) {
   return { ok: false, error: 'Row not found' };
 }
 
-// ── First-run setup ────────────────────────────────────────────────────────
+// ── First-run / migration setup ────────────────────────────────────────────
+// Run this once after updating the schema to recreate missing sheets.
 function setupSheets() {
   Object.keys(SHEETS).forEach(function(key) { getSheet(key); });
-  SpreadsheetApp.getUi().alert('All sheets created successfully!');
+  SpreadsheetApp.getUi().alert('All sheets ready!');
 }
