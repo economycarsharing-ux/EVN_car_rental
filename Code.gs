@@ -8,7 +8,7 @@ var SHEETS = {
   customers:    { name: 'Customers',    cols: ['id','name','phone','email','idNumber','licenseNumber','address','notes','createdAt'] },
   bookings:     { name: 'Bookings',     cols: ['id','customerId','vehicleId','startDate','endDate','returnDate','dailyRate','totalAmount','deposit','cancelled','notes','createdAt','startTime','endTime','returnTime'] },
   payments:     { name: 'Payments',     cols: ['id','bookingId','amount','date','method','type','notes'] },
-  expenses:     { name: 'Expenses',     cols: ['id','vehicleId','type','amount','date','stakeholderId','partName','replacedPartCondition','replacedPartDisposition','description','notes'] },
+  expenses:     { name: 'Expenses',     cols: ['id','vehicleId','type','amount','date','stakeholderId','partName','partCategory','replacedPartCondition','replacedPartDisposition','description','notes'] },
   stakeholders: { name: 'Stakeholders', cols: ['id','name','type','phone','notes'] },
 };
 

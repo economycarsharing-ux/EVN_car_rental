@@ -411,7 +411,8 @@ function renderFinances(body, actions) {
       <div class="card dash-full">
         <div class="card-header"><div class="card-title">Expenses</div></div>
         <div class="table-wrap">${recentExp.length?`<table><thead><tr><th>Date</th><th>Type</th><th>Vehicle</th><th>Stakeholder</th><th>Description</th><th>Part info</th><th>Amount</th><th></th></tr></thead><tbody>${recentExp.map(e=>{
-          const partInfo=(e.type==='Part'&&e.partName)?`<small style="display:block"><b>${e.partName}</b>${e.replacedPartCondition&&e.replacedPartCondition!=='—'?` · old: ${e.replacedPartCondition}`:''}${e.replacedPartDisposition&&e.replacedPartDisposition!=='—'?' · '+e.replacedPartDisposition:''}</small>`:'—';
+          const partCatColors={'New':'var(--success)','Used':'var(--warning)','From our storage':'#8b5cf6'};
+          const partInfo=(e.type==='Part'&&e.partName)?`<small style="display:block"><b>${e.partName}</b>${e.partCategory?` <span style="color:${partCatColors[e.partCategory]||'var(--muted)'};font-size:10px;font-weight:700">[${e.partCategory}]</span>`:''}${e.replacedPartCondition&&e.replacedPartCondition!=='—'?` · old: ${e.replacedPartCondition}`:''}${e.replacedPartDisposition&&e.replacedPartDisposition!=='—'?' · '+e.replacedPartDisposition:''}</small>`:'—';
           return `<tr><td>${fmtDate(e.date)}</td><td><span class="badge ${e.type==='Part'?'badge-upcoming':e.type==='Service'?'badge-active':'badge-completed'}">${e.type||e.category||'—'}</span></td><td>${e.vehicleId?vehicleLabelShort(e.vehicleId):'—'}</td><td>${e.stakeholderId?`<strong>${stakeholderName(e.stakeholderId)}</strong>`:'—'}</td><td>${e.description||'—'}</td><td style="max-width:160px">${partInfo}</td><td class="td-mono" style="color:var(--danger);font-weight:600">${amd(e.amount)}</td><td><button class="btn btn-ghost btn-sm" onclick="openExpenseModal('${e.id}')">Edit</button></td></tr>`;
         }).join('')}</tbody></table>`:'<div class="empty-state">No expenses in period</div>'}</div>
       </div>
@@ -743,9 +744,15 @@ function openExpenseModal(expenseId, prefillVehicleId) {
           <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:2px">
             <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:10px">Part / Detail Info</div>
             <div class="form-grid">
-              <div class="form-group form-full">
+              <div class="form-group">
                 <label class="form-label">Part / Detail name</label>
                 <input type="text" class="form-control" id="ex-partname" value="${e?.partName||''}" placeholder="Brake pads, oil filter, timing belt…">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Part category</label>
+                <select class="form-control" id="ex-partcat">
+                  ${['New','Used','From our storage'].map(c=>`<option ${(e?.partCategory||'New')===c?'selected':''}>${c}</option>`).join('')}
+                </select>
               </div>
               <div class="form-group">
                 <label class="form-label">Old part condition</label>
@@ -811,12 +818,13 @@ async function saveExpense(id) {
   const vehicleId=document.getElementById('ex-veh').value;
   const stakeholderId=document.getElementById('ex-stakeholder')?.value||'';
   const partName=(type==='Part'?document.getElementById('ex-partname')?.value.trim():'') ||'';
+  const partCategory=(type==='Part'?document.getElementById('ex-partcat')?.value:'') ||'';
   const replacedPartCondition=(type==='Part'?document.getElementById('ex-oldcond')?.value:'') ||'';
   const replacedPartDisposition=(type==='Part'?document.getElementById('ex-olddisp')?.value:'') ||'';
   const description=document.getElementById('ex-desc').value.trim();
   const notes=document.getElementById('ex-notes').value.trim();
 
-  const expense={id:id||uid(),type,amount,date,vehicleId,stakeholderId,partName,replacedPartCondition,replacedPartDisposition,description,notes};
+  const expense={id:id||uid(),type,amount,date,vehicleId,stakeholderId,partName,partCategory,replacedPartCondition,replacedPartDisposition,description,notes};
   closeModal();
   try{
     if(!GAS_URL.includes('YOUR_DEPLOYMENT_ID')){const r=await callApi({action:'saveExpense',data:JSON.stringify(expense)});if(r.error)throw new Error(r.error);expense.id=r.id||expense.id;}
