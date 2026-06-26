@@ -366,10 +366,12 @@ function paidExpenseIdSet() {
 }
 
 function stakeholderStats(stakeholderId) {
-  const paid=paidExpenseIdSet();
   const exps=state.expenses.filter(e=>e.stakeholderId===stakeholderId&&(e.type==='Part'||e.type==='Service'));
   const billed=exps.reduce((s,e)=>s+(Number(e.amount)||0),0);
-  const paidAmt=exps.filter(e=>paid.has(e.id)).reduce((s,e)=>s+(Number(e.amount)||0),0);
+  // Paid = actual cash handed to this stakeholder across all recorded payments
+  const paidAmt=state.stakeholderPayments
+    .filter(p=>p.stakeholderId===stakeholderId)
+    .reduce((s,p)=>s+(Number(p.amount)||0),0);
   return {billed, paidAmt, outstanding:billed-paidAmt};
 }
 
@@ -693,9 +695,21 @@ function openVehicleModal(vehicleId) {
   </div></div>`);
 }
 
+// Vehicle IDs are the plate number. New vehicles derive their id from the
+// plate (uppercased, made unique). Existing vehicles keep their id on edit so
+// linked bookings/expenses are never orphaned — even if the plate is changed.
+function uniqueVehicleId(plate){
+  const base=plate.trim().toUpperCase();
+  let candidate=base, n=1;
+  while(state.vehicles.some(v=>v.id===candidate)){ n++; candidate=base+'-'+n; }
+  return candidate;
+}
+
 async function saveVehicle(id) {
-  const make=document.getElementById('v-make').value.trim(),model=document.getElementById('v-model').value.trim(),plate=document.getElementById('v-plate').value.trim(),dailyRate=Number(document.getElementById('v-rate').value)||0;
-  const vehicle={id:id||uid(),make,model,plate,dailyRate,year:document.getElementById('v-year').value,color:document.getElementById('v-color').value.trim(),mileage:Number(document.getElementById('v-mileage').value)||'',status:document.getElementById('v-status').value,insuranceExpiry:document.getElementById('v-ins').value,regExpiry:document.getElementById('v-reg').value,notes:document.getElementById('v-notes').value.trim()};
+  const make=document.getElementById('v-make').value.trim(),model=document.getElementById('v-model').value.trim(),plate=document.getElementById('v-plate').value.trim().toUpperCase(),dailyRate=Number(document.getElementById('v-rate').value)||0;
+  if(!plate){toast('Plate number is required','error');return;}
+  const vid=id||uniqueVehicleId(plate);
+  const vehicle={id:vid,make,model,plate,dailyRate,year:document.getElementById('v-year').value,color:document.getElementById('v-color').value.trim(),mileage:Number(document.getElementById('v-mileage').value)||'',status:document.getElementById('v-status').value,insuranceExpiry:document.getElementById('v-ins').value,regExpiry:document.getElementById('v-reg').value,notes:document.getElementById('v-notes').value.trim()};
   closeModal();
   try{if(!GAS_URL.includes('YOUR_DEPLOYMENT_ID')){const r=await callApi({action:'saveVehicle',data:JSON.stringify(vehicle)});if(r.error)throw new Error(r.error);vehicle.id=r.id||vehicle.id;}const idx=state.vehicles.findIndex(v=>v.id===id);if(idx>=0)state.vehicles[idx]=vehicle;else state.vehicles.push(vehicle);toast(id?'Vehicle updated':'Vehicle added','success');}catch(e){toast('Save failed: '+e.message,'error');}
   renderPage();
@@ -994,11 +1008,15 @@ async function saveStakeholder(id, fromExpense) {
 }
 
 // ── STAKEHOLDER PAYMENT ALLOCATION ────────────────────────────────────────
+// Enter the lump sum actually paid, then spread it across the stakeholder's
+// unpaid works. The amount is auto-split (fills each work's full cost in date
+// order until the money runs out) and every field stays editable.
 function openStakeholderPaymentModal(stakeholderId) {
   const s=state.stakeholders.find(x=>x.id===stakeholderId); if(!s)return;
   const paid=paidExpenseIdSet();
   const outstanding=state.expenses.filter(e=>e.stakeholderId===stakeholderId&&(e.type==='Part'||e.type==='Service')&&!paid.has(e.id)).sort((a,b)=>a.date>b.date?1:-1);
   const stats=stakeholderStats(stakeholderId);
+  const totalOut=outstanding.reduce((sum,e)=>sum+(Number(e.amount)||0),0);
 
   openModal(`<div class="modal-overlay"><div class="modal modal-wide">
     <div class="modal-header"><div class="modal-title">Pay ${s.name}</div>${CLOSE_BTN}</div>
@@ -1010,72 +1028,91 @@ function openStakeholderPaymentModal(stakeholderId) {
       </div>
 
       ${outstanding.length ? `
-        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:8px">Select expenses to mark as paid</div>
-        <div style="border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:16px">
-          <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--surface2);font-size:12px;font-weight:600;border-bottom:1px solid var(--border)">
-            <input type="checkbox" id="stk-pay-all" onchange="toggleAllStkExp(this.checked)">
-            <span>Select all</span>
-            <span style="margin-left:auto;color:var(--primary)" id="stk-pay-total">0 ֏ selected</span>
-          </div>
-          ${outstanding.map(e=>`
-          <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;font-size:13px">
-            <input type="checkbox" class="stk-exp-cb" data-id="${e.id}" data-amount="${e.amount||0}" onchange="updateStkPayTotal()">
-            <div style="flex:1">
-              <div style="font-weight:600">${e.description||e.partName||e.type}</div>
-              <div style="font-size:11px;color:var(--muted)">${e.type}${e.partName?' · '+e.partName:''}${e.vehicleId?' · '+vehicleLabelShort(e.vehicleId):''} · ${fmtDate(e.date)}</div>
-            </div>
-            <div style="font-weight:700;color:var(--danger);white-space:nowrap">${amd(e.amount)}</div>
-          </label>`).join('')}
+        <div class="form-grid">
+          <div class="form-group"><label class="form-label">Amount paid <span class="req">*</span></label><input type="number" class="form-control" id="stk-pay-amount" min="0" step="any" value="${totalOut}" oninput="autoSplitStkPay()"></div>
+          <div class="form-group"><label class="form-label">Payment Date</label><input type="date" class="form-control" id="stk-pay-date" value="${todayStr()}"></div>
+          <div class="form-group"><label class="form-label">Method</label><select class="form-control" id="stk-pay-method"><option>Cash</option><option>Card</option><option>Transfer</option></select></div>
         </div>
-      ` : `<div style="color:var(--success);font-weight:600;margin-bottom:16px;padding:12px;border:1px solid var(--success);border-radius:var(--radius)">✓ All expenses already paid</div>`}
 
-      <div class="form-grid">
-        <div class="form-group"><label class="form-label">Payment Date</label><input type="date" class="form-control" id="stk-pay-date" value="${todayStr()}"></div>
-        <div class="form-group"><label class="form-label">Method</label><select class="form-control" id="stk-pay-method"><option>Cash</option><option>Card</option><option>Transfer</option></select></div>
+        <div style="display:flex;align-items:center;gap:10px;margin:14px 0 8px">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)">Allocate to works</div>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="autoSplitStkPay()">↻ Auto-split</button>
+          <span style="margin-left:auto;font-size:12px" id="stk-alloc-summary"></span>
+        </div>
+        <div style="border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:16px">
+          ${outstanding.map(e=>`
+          <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border);font-size:13px">
+            <div style="flex:1;min-width:0">
+              <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${e.description||e.partName||e.type}</div>
+              <div style="font-size:11px;color:var(--muted)">${e.type}${e.partName?' · '+e.partName:''}${e.vehicleId?' · '+vehicleLabelShort(e.vehicleId):''} · ${fmtDate(e.date)} · cost ${amd(e.amount)}</div>
+            </div>
+            <input type="number" class="form-control stk-alloc" data-id="${e.id}" data-cost="${Number(e.amount)||0}" min="0" step="any" placeholder="0" style="width:120px;text-align:right" oninput="refreshStkAllocSummary()">
+          </div>`).join('')}
+        </div>
+
         <div class="form-group form-full"><label class="form-label">Notes</label><input type="text" class="form-control" id="stk-pay-notes" placeholder="Optional"></div>
-      </div>
+      ` : `<div style="color:var(--success);font-weight:600;margin-bottom:16px;padding:12px;border:1px solid var(--success);border-radius:var(--radius)">✓ All works already paid</div>`}
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" id="stk-pay-btn" onclick="saveStakeholderPayment('${stakeholderId}')" ${outstanding.length?'':'disabled'}>Record Payment</button>
     </div>
   </div></div>`);
+
+  if(outstanding.length) autoSplitStkPay();
 }
 
-function toggleAllStkExp(checked) {
-  document.querySelectorAll('.stk-exp-cb').forEach(cb=>cb.checked=checked);
-  updateStkPayTotal();
+// Distribute the entered amount across works in order, filling each work's
+// full cost until the money runs out (last one may get a partial amount).
+function autoSplitStkPay() {
+  let remaining=Number(document.getElementById('stk-pay-amount').value)||0;
+  document.querySelectorAll('.stk-alloc').forEach(inp=>{
+    const cost=Number(inp.dataset.cost)||0;
+    const give=Math.max(0,Math.min(cost,remaining));
+    inp.value=give?give:'';
+    remaining-=give;
+  });
+  refreshStkAllocSummary();
 }
 
-function updateStkPayTotal() {
-  const cbs=[...document.querySelectorAll('.stk-exp-cb:checked')];
-  const total=cbs.reduce((s,cb)=>s+(Number(cb.dataset.amount)||0),0);
-  const el=document.getElementById('stk-pay-total');
-  if(el) el.textContent=amd(total)+' selected';
-  const allCb=document.querySelectorAll('.stk-exp-cb');
-  const allChk=document.getElementById('stk-pay-all');
-  if(allChk) allChk.checked=allCb.length>0&&allCb.length===cbs.length;
+function refreshStkAllocSummary() {
+  const amt=Number(document.getElementById('stk-pay-amount').value)||0;
+  let alloc=0;
+  document.querySelectorAll('.stk-alloc').forEach(inp=>{ alloc+=Number(inp.value)||0; });
+  const rem=amt-alloc;
+  const el=document.getElementById('stk-alloc-summary');
+  if(el){
+    const over=rem<-0.001;
+    const color=Math.abs(rem)<0.001?'var(--success)':(over?'var(--danger)':'var(--muted)');
+    el.innerHTML=`Allocated <b>${amd(alloc)}</b> of <b>${amd(amt)}</b> · <span style="color:${color}">${over?'over by '+amd(-rem):amd(rem)+' left'}</span>`;
+  }
   const btn=document.getElementById('stk-pay-btn');
-  if(btn) btn.disabled=cbs.length===0;
+  if(btn) btn.disabled=!(amt>0&&alloc>0&&alloc<=amt+0.001);
 }
 
 async function saveStakeholderPayment(stakeholderId) {
-  const cbs=[...document.querySelectorAll('.stk-exp-cb:checked')];
-  if(!cbs.length){toast('Select at least one expense','error');return;}
-  const expenseIds=cbs.map(cb=>cb.dataset.id).join(',');
-  const amount=cbs.reduce((s,cb)=>s+(Number(cb.dataset.amount)||0),0);
+  const amount=Number(document.getElementById('stk-pay-amount').value)||0;
+  if(amount<=0){toast('Enter the amount paid','error');return;}
+  const allocs=[]; let allocSum=0;
+  document.querySelectorAll('.stk-alloc').forEach(inp=>{
+    const v=Number(inp.value)||0;
+    if(v>0){ allocs.push({id:inp.dataset.id,amt:v}); allocSum+=v; }
+  });
+  if(!allocs.length){toast('Allocate the payment to at least one work','error');return;}
+  if(allocSum>amount+0.001){toast('Allocated more than the amount paid','error');return;}
   const payment={
     id:uid(), stakeholderId,
     date:document.getElementById('stk-pay-date').value,
     amount, method:document.getElementById('stk-pay-method').value,
-    expenseIds,
+    expenseIds:allocs.map(a=>a.id).join(','),
+    allocations:allocs.map(a=>a.id+':'+a.amt).join(','),
     notes:document.getElementById('stk-pay-notes').value.trim(),
   };
   closeModal();
   try{
     if(!GAS_URL.includes('YOUR_DEPLOYMENT_ID')){const r=await callApi({action:'saveStakeholderPayment',data:JSON.stringify(payment)});if(r.error)throw new Error(r.error);payment.id=r.id||payment.id;}
     state.stakeholderPayments.push(payment);
-    toast(`Payment of ${amd(amount)} recorded for ${cbs.length} expense${cbs.length!==1?'s':''}`, 'success');
+    toast(`Payment of ${amd(amount)} recorded across ${allocs.length} work${allocs.length!==1?'s':''}`, 'success');
   }catch(e){toast('Error: '+e.message,'error');}
   renderPage();
 }

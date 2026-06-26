@@ -10,7 +10,7 @@ var SHEETS = {
   payments:     { name: 'Payments',     cols: ['id','bookingId','amount','date','method','type','notes'] },
   expenses:     { name: 'Expenses',     cols: ['id','vehicleId','type','amount','date','stakeholderId','partName','partCategory','replacedPartCondition','replacedPartDisposition','description','notes'] },
   stakeholders:         { name: 'Stakeholders',         cols: ['id','name','type','phone','notes'] },
-  stakeholder_payments: { name: 'StakeholderPayments', cols: ['id','stakeholderId','date','amount','method','expenseIds','notes'] },
+  stakeholder_payments: { name: 'StakeholderPayments', cols: ['id','stakeholderId','date','amount','method','expenseIds','allocations','notes'] },
 };
 
 // ── Entry point ────────────────────────────────────────────────────────────
@@ -164,4 +164,71 @@ function setupSheets() {
   });
   var msg = added.length ? 'Added: ' + added.join(', ') : 'All sheets already up to date.';
   SpreadsheetApp.getUi().alert(msg);
+}
+
+// ── One-time migration: switch vehicle IDs to plate numbers ─────────────────
+// Replaces each vehicle's random id with its plate (uppercased, made unique),
+// and updates every vehicleId reference in Bookings and Expenses to match.
+// SAFE: backs up Vehicles/Bookings/Expenses first, and only touches the
+// id / vehicleId columns (never the other expense columns). Run once.
+function migrateVehicleIdsToPlates() {
+  var ui = SpreadsheetApp.getUi();
+  var vSheet = SS.getSheetByName('Vehicles');
+  if (!vSheet) { ui.alert('No Vehicles sheet found.'); return; }
+
+  // 1) Backup affected sheets
+  var stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd_HHmmss');
+  ['Vehicles','Bookings','Expenses'].forEach(function(name){
+    var sh = SS.getSheetByName(name);
+    if (sh) sh.copyTo(SS).setName(name + '_BAK_' + stamp);
+  });
+
+  // 2) Build oldId -> newId(plate) map from the Vehicles sheet
+  var vData  = vSheet.getDataRange().getValues();
+  var vHead  = vData[0].map(String);
+  var idC    = vHead.indexOf('id');
+  var plateC = vHead.indexOf('plate');
+  if (idC < 0 || plateC < 0) { ui.alert('Vehicles sheet is missing an id or plate column.'); return; }
+
+  var map = {};   // oldId -> newId
+  var used = {};  // newId -> true (collision guard, e.g. duplicate plate 37JI433)
+  for (var i = 1; i < vData.length; i++) {
+    var oldId = String(vData[i][idC]);
+    if (!oldId) continue;
+    var plate = String(vData[i][plateC]).trim().toUpperCase();
+    if (!plate) { map[oldId] = oldId; continue; }   // no plate -> keep existing id
+    var cand = plate, n = 1;
+    while (used[cand]) { n++; cand = plate + '-' + n; }
+    used[cand] = true;
+    map[oldId] = cand;
+  }
+
+  // 3) Write new ids into the Vehicles id column
+  for (var i = 1; i < vData.length; i++) {
+    var oldId = String(vData[i][idC]);
+    if (map[oldId]) vSheet.getRange(i + 1, idC + 1).setValue(map[oldId]);
+  }
+
+  // 4) Update vehicleId references in Bookings and Expenses (that column only)
+  var changed = { Bookings: 0, Expenses: 0 };
+  ['Bookings','Expenses'].forEach(function(name){
+    var sh = SS.getSheetByName(name);
+    if (!sh) return;
+    var data = sh.getDataRange().getValues();
+    var c = data[0].map(String).indexOf('vehicleId');
+    if (c < 0) return;
+    for (var i = 1; i < data.length; i++) {
+      var old = String(data[i][c]);
+      if (map[old] && map[old] !== old) {
+        sh.getRange(i + 1, c + 1).setValue(map[old]);
+        changed[name]++;
+      }
+    }
+  });
+
+  ui.alert('Migration complete.\n\n' +
+           'Vehicles remapped: ' + Object.keys(map).length + '\n' +
+           'Bookings updated: '  + changed.Bookings + '\n' +
+           'Expenses updated: '  + changed.Expenses + '\n\n' +
+           'Backups saved with suffix  _BAK_' + stamp);
 }

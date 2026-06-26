@@ -1,2 +1,2 @@
 // Google Apps Script web app URL
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbxUx1dN5Flmt7WwYgkOx4lFZLbMM0zwiVPfGy3JDDnJsfkJBUD_y3HPWLRfY90KLizfrQ/exec';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbz_tEKL9p-k0gJQBTKM47mJFFLNObhv8r6DedIsHCZT_QCpm1uDEjaCAjePiZsFR1BTaw/exec';
