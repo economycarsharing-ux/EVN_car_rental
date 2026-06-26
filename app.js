@@ -84,7 +84,11 @@ function bookingPaid(bookingId) {
 function customerById(id)     { return state.customers.find(c => c.id===id); }
 function vehicleById(id)      { return state.vehicles.find(v => v.id===id); }
 function customerName(id)     { const c=customerById(id); return c?c.name:'—'; }
-function vehicleLabelShort(id){ const v=vehicleById(id); return v?`${v.make} ${v.model}`:'—'; }
+function vehicleLabelShort(id){
+  const v=vehicleById(id); if(!v)return '—';
+  const model=[v.make,v.model].filter(Boolean).join(' ');
+  return v.plate?`${model} · ${v.plate}`:(model||'—');
+}
 function vehicleLabel(id)     { const v=vehicleById(id); return v?`${v.make} ${v.model} · ${v.plate}`:'—'; }
 
 function statusBadge(st) {
@@ -252,7 +256,7 @@ function renderBookings(body, actions) {
             : fmtDateTime(b.endDate, b.endTime);
           return `<tr>
             <td class="td-bold">${customerName(b.customerId)}</td>
-            <td>${vehicleLabelShort(b.vehicleId)}<br><small style="color:var(--muted)">${vehicleById(b.vehicleId)?.plate||''}</small></td>
+            <td>${vehicleLabelShort(b.vehicleId)}</td>
             <td>${fmtDateTime(b.startDate, b.startTime)}</td>
             <td>${returnDisplay}</td>
             <td>${days}</td>
