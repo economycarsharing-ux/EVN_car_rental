@@ -400,7 +400,7 @@ function renderFinances(body, actions) {
   }
 
   const recentPay=[...pays].sort((a,b)=>b.date>a.date?1:-1).slice(0,8);
-  const recentExp=[...exps].sort((a,b)=>b.date>a.date?1:-1).slice(0,10);
+  const recentExp=[...exps].sort((a,b)=>b.date>a.date?1:-1);
 
   body.innerHTML=`
     <div class="kpi-row">
