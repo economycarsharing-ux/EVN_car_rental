@@ -13,7 +13,7 @@ var SHEETS = {
   // Existing expense rows without recordType are still treated as expenses.
   expenses:     { name: 'Expenses',     cols: ['id','recordType','vehicleId','type','amount','date','stakeholderId','partName','partCategory','replacedPartCondition','replacedPartDisposition','description','notes','name','stakeholderType','phone','stakeholderNotes'] },
   // Post-factum income ledger: each row is income already received. No bookings.
-  income:       { name: 'Income',       cols: ['id','date','customerId','customerName','vehicleId','fromDate','toDate','days','rate','amount','method','type','notes','createdAt'] },
+  income:       { name: 'Income',       cols: ['id','date','customerId','customerName','vehicleId','fromDate','startTime','toDate','endTime','days','rate','amount','method','type','notes','createdAt'] },
 };
 
 // ── Entry point ────────────────────────────────────────────────────────────

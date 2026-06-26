@@ -1,4 +1,4 @@
-'use strict';
+'use strict'; // v15
 
 // ── State ──────────────────────────────────────────────────────────────────
 const state = {
@@ -208,7 +208,9 @@ function renderIncome(body, actions) {
       <div class="table-wrap">
         ${filtered.length?`<table><thead><tr><th>Date</th><th>Customer</th><th>Vehicle</th><th>Period</th><th>Days</th><th>Amount</th><th>Method</th><th>Type</th><th></th></tr></thead><tbody>
         ${filtered.map(it=>{
-          const period=(it.fromDate&&it.toDate)?`${fmtDate(it.fromDate)} → ${fmtDate(it.toDate)}`:'—';
+          const fromStr=it.fromDate?(fmtDate(it.fromDate)+(it.startTime?' '+it.startTime:'')):'';
+          const toStr=it.toDate?(fmtDate(it.toDate)+(it.endTime?' '+it.endTime:'')):'';
+          const period=(fromStr&&toStr)?`${fromStr} → ${toStr}`:'—';
           return `<tr>
             <td>${fmtDate(it.date)}</td>
             <td class="td-bold">${it.customerName||customerName(it.customerId)}</td>
@@ -407,11 +409,17 @@ function openIncomeModal(incomeId, prefillCustomerId) {
         </div>
         <div class="form-group">
           <label class="form-label">Rented from</label>
-          <input type="date" class="form-control" id="in-from" value="${it?.fromDate||''}" onchange="calcIncomeTotal()">
+          <div style="display:flex;gap:6px">
+            <input type="date" class="form-control" id="in-from" value="${it?.fromDate||''}" onchange="calcIncomeTotal()" style="flex:1">
+            <input type="time" class="form-control" id="in-from-time" value="${it?.startTime||''}" style="width:110px">
+          </div>
         </div>
         <div class="form-group">
           <label class="form-label">Rented to</label>
-          <input type="date" class="form-control" id="in-to" value="${it?.toDate||''}" onchange="calcIncomeTotal()">
+          <div style="display:flex;gap:6px">
+            <input type="date" class="form-control" id="in-to" value="${it?.toDate||''}" onchange="calcIncomeTotal()" style="flex:1">
+            <input type="time" class="form-control" id="in-to-time" value="${it?.endTime||''}" style="width:110px">
+          </div>
         </div>
         <div class="form-group">
           <label class="form-label">Daily rate (֏)</label>
@@ -459,6 +467,8 @@ async function saveIncome(id) {
   const vehicleId=document.getElementById('in-veh').value;
   const fromDate=document.getElementById('in-from').value, toDate=document.getElementById('in-to').value;
   if(fromDate&&toDate&&toDate<fromDate){toast('“Rented to” must be after “rented from”','error');return;}
+  const startTime=document.getElementById('in-from-time').value;
+  const endTime=document.getElementById('in-to-time').value;
   const rate=Number(document.getElementById('in-rate').value)||0;
   const amount=Number(document.getElementById('in-amount').value)||0;
   if(!amount){toast('Enter an amount (or fill rate + dates)','error');return;}
@@ -467,7 +477,7 @@ async function saveIncome(id) {
     id:id||uid(),
     date:document.getElementById('in-date').value||todayStr(),
     customerId, customerName:customerId?customerName(customerId):'',
-    vehicleId, fromDate, toDate, days, rate, amount,
+    vehicleId, fromDate, startTime, toDate, endTime, days, rate, amount,
     method:document.getElementById('in-meth').value,
     type:document.getElementById('in-type').value,
     notes:document.getElementById('in-notes').value.trim(),
