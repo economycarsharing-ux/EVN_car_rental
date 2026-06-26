@@ -64,6 +64,17 @@ function getSheet(key) {
   return sheet;
 }
 
+function fmtCell(val) {
+  if (val instanceof Date) {
+    // Sheets returns date cells as Date objects — format as YYYY-MM-DD
+    var y = val.getFullYear();
+    var m = ('0' + (val.getMonth() + 1)).slice(-2);
+    var d = ('0' + val.getDate()).slice(-2);
+    return y + '-' + m + '-' + d;
+  }
+  return (val === undefined || val === null) ? '' : String(val);
+}
+
 function readSheet(key) {
   var sheet = getSheet(key);
   var cols  = SHEETS[key].cols;
@@ -71,7 +82,7 @@ function readSheet(key) {
   if (data.length <= 1) return [];
   return data.slice(1).map(function(row) {
     var obj = {};
-    cols.forEach(function(c, i) { obj[c] = (row[i] === undefined || row[i] === null) ? '' : String(row[i]); });
+    cols.forEach(function(c, i) { obj[c] = fmtCell(row[i]); });
     return obj;
   }).filter(function(r) { return r.id; });
 }
